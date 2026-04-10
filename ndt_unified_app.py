@@ -952,168 +952,432 @@ class NDTProcedureApp:
     def add_standard(self):
         dialog = tk.Toplevel(self.root)
         dialog.title("표준 절차 추가")
-        dialog.geometry("640x380")
-        
-        tk.Label(dialog, text="추가할 표준을 선택하세요:").pack(pady=10)
+        dialog.geometry("820x620")
+        dialog.resizable(True, True)
+
+        # ── 상단 정보 ──
+        top = tk.Frame(dialog, bg="#e8f4fd", pady=6)
+        top.pack(fill=tk.X)
 
         selected = self.tree.selection()
         if selected:
             selected_idx = int(selected[0])
             selected_values = self.tree.item(selected[0], 'values')
             selected_desc = selected_values[1] if selected_values and len(selected_values) > 1 else '선택 항목'
-            selected_label_text = f"현재 선택: {selected_idx + 1}번 ({selected_desc[:60]})"
+            sel_txt = f"현재 선택: {selected_idx + 1}번 ({selected_desc[:55]})"
         else:
-            selected_label_text = "현재 선택: 없음 (맨 끝에 추가됨)"
+            sel_txt = "현재 선택: 없음 (맨 끝에 추가됨)"
 
-        tk.Label(dialog, text=selected_label_text, fg="blue").pack(pady=(0, 5))
+        tk.Label(top, text=sel_txt, fg="#1565c0", bg="#e8f4fd",
+                 font=("Arial", 9)).pack(side=tk.LEFT, padx=12)
 
-        position_frame = tk.Frame(dialog)
-        position_frame.pack(pady=(0, 8))
-        tk.Label(position_frame, text="삽입 위치:").pack(side=tk.LEFT, padx=(0, 8))
+        pos_frame = tk.Frame(top, bg="#e8f4fd")
+        pos_frame.pack(side=tk.RIGHT, padx=12)
+        tk.Label(pos_frame, text="삽입 위치:", bg="#e8f4fd").pack(side=tk.LEFT)
         position_var = tk.StringVar(value='after')
-        tk.Radiobutton(position_frame, text="선택 위", variable=position_var, value='before').pack(side=tk.LEFT)
-        tk.Radiobutton(position_frame, text="선택 아래", variable=position_var, value='after').pack(side=tk.LEFT, padx=(8, 0))
-
-        quick_frame = tk.Frame(dialog)
-        quick_frame.pack(pady=5)
+        tk.Radiobutton(pos_frame, text="위", variable=position_var, value='before',
+                       bg="#e8f4fd").pack(side=tk.LEFT, padx=3)
+        tk.Radiobutton(pos_frame, text="아래", variable=position_var, value='after',
+                       bg="#e8f4fd").pack(side=tk.LEFT)
 
         standards = self.standards
 
-        def add_standard_content(selected_key):
-            if selected_key not in standards:
-                messagebox.showwarning("오류", "선택한 표준이 없습니다.")
+        # ── 탭 카테고리 정의 ──
+        TAB_DEFS = [
+            ("전체",  None,                                              "#ffffff"),
+            ("PAUT",  ["PAUT","Phased Array","13588","11666","19285","Code Case"], "#fffde7"),
+            ("RT",    ["RT","Radiograph","17636","10675","디지털 RT"],   "#e3f2fd"),
+            ("MT",    ["MT","Magnetic","17638","23278"],                  "#e8f5e9"),
+            ("PT",    ["PT","Penetrant","3452","23277"],                  "#fce4ec"),
+            ("PMI",   ["PMI","Material Identification","15011",
+                       "E1476","E2191","PCC-2"],                          "#fffde7"),
+            ("UT",    ["UT","Ultrasonic","TOFD"],                         "#e8eaf6"),
+        ]
+
+        def get_keys(keywords):
+            if keywords is None:
+                return list(standards.keys())
+            return [k for k in standards.keys()
+                    if any(w.lower() in k.lower() for w in keywords)]
+
+        # ── Notebook ──
+        notebook = ttk.Notebook(dialog)
+        notebook.pack(fill=tk.BOTH, expand=True, padx=8, pady=(6, 0))
+
+        tab_state = {}   # tab_name → {'var', 'listbox', 'preview', 'keys'}
+
+        def build_tab(tab_name, keywords, bg):
+            frame = tk.Frame(notebook, bg=bg)
+            notebook.add(frame, text=f"  {tab_name}  ")
+
+            keys = get_keys(keywords)
+
+            # 좌: 리스트박스  /  우: 미리보기
+            pane = tk.PanedWindow(frame, orient=tk.HORIZONTAL, sashrelief=tk.RIDGE)
+            pane.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+
+            # 좌측 패널
+            left = tk.Frame(pane, bg=bg)
+            pane.add(left, width=280)
+
+            tk.Label(left, text=f"{len(keys)}개 항목", font=("Arial", 8),
+                     fg="gray", bg=bg).pack(anchor='w', padx=4)
+
+            sb = tk.Scrollbar(left)
+            sb.pack(side=tk.RIGHT, fill=tk.Y)
+            lb = tk.Listbox(left, yscrollcommand=sb.set, selectmode=tk.SINGLE,
+                            font=("Arial", 9), activestyle='dotbox', relief=tk.FLAT,
+                            selectbackground="#1565c0", selectforeground="white")
+            lb.pack(fill=tk.BOTH, expand=True, padx=2)
+            sb.config(command=lb.yview)
+            for k in keys:
+                lb.insert(tk.END, k)
+
+            # 우측 미리보기
+            right = tk.Frame(pane, bg=bg)
+            pane.add(right)
+
+            tk.Label(right, text="미리보기", font=("Arial", 8), fg="gray",
+                     bg=bg).pack(anchor='w', padx=4)
+            preview_sb = tk.Scrollbar(right)
+            preview_sb.pack(side=tk.RIGHT, fill=tk.Y)
+            preview = tk.Text(right, wrap=tk.WORD, yscrollcommand=preview_sb.set,
+                              font=("Arial", 9), bg="#fafafa", relief=tk.FLAT,
+                              state=tk.DISABLED)
+            preview.pack(fill=tk.BOTH, expand=True, padx=2)
+            preview_sb.config(command=preview.yview)
+
+            def on_select(evt):
+                sel = lb.curselection()
+                if not sel:
+                    return
+                key = lb.get(sel[0])
+                preview.config(state=tk.NORMAL)
+                preview.delete("1.0", tk.END)
+                preview.insert(tk.END, standards.get(key, ""))
+                preview.config(state=tk.DISABLED)
+
+            lb.bind('<<ListboxSelect>>', on_select)
+            if keys:
+                lb.selection_set(0)
+                lb.event_generate('<<ListboxSelect>>')
+
+            tab_state[tab_name] = {'lb': lb, 'preview': preview, 'keys': keys}
+
+        for name, kws, bg in TAB_DEFS:
+            build_tab(name, kws, bg)
+
+        # ── 하단 버튼 ──
+        btn_bar = tk.Frame(dialog, bg="#f5f5f5", pady=6)
+        btn_bar.pack(fill=tk.X)
+
+        def get_selected_key():
+            tab_name = notebook.tab(notebook.select(), "text").strip()
+            data = tab_state.get(tab_name)
+            if not data:
+                return None
+            sel = data['lb'].curselection()
+            if not sel:
+                return None
+            return data['lb'].get(sel[0])
+
+        def do_add():
+            key = get_selected_key()
+            if not key:
+                messagebox.showwarning("선택 없음", "추가할 항목을 선택하세요.", parent=dialog)
                 return
             insert_index = self.get_insert_index(position_var.get())
-            self.content.insert(insert_index, {'type': 'text', 'text': standards[selected_key], 'style': 'Normal', 'area': 'body'})
+            self.content.insert(insert_index, {'type': 'text', 'text': standards[key],
+                                               'style': 'Normal', 'area': 'body'})
             self.refresh_content()
-            if str(insert_index) in self.tree.get_children():
-                self.tree.selection_set(str(insert_index))
-                self.tree.focus(str(insert_index))
+            iid = str(insert_index)
+            if self.tree.exists(iid):
+                self.tree.selection_set(iid)
+                self.tree.focus(iid)
+                self.tree.see(iid)
+            self._highlight_content_text_item(insert_index)
             self.status_label.config(text=f"로드된 문서: 변경됨 | 포함된 사진: {len(self.image_paths)}개")
-            messagebox.showinfo("완료", f"'{selected_key}' 내용이 {insert_index + 1}번째 위치에 추가되었습니다.")
-            # 추가된 항목을 자동으로 편집 모드로 열기
-            self.edit_text_dialog(insert_index, standards[selected_key])
+            dialog.destroy()
+            self.edit_text_dialog(insert_index, standards[key])
 
-        def open_standard_picker(title, keywords):
-            picker = tk.Toplevel(self.root)
-            picker.title(f"{title} 항목 선택")
-            picker.geometry("750x520")
+        def do_delete():
+            key = get_selected_key()
+            if not key:
+                return
+            if not messagebox.askyesno("삭제 확인",
+                    f"'{key}' 항목을 목록에서 삭제하시겠습니까?", parent=dialog):
+                return
+            del standards[key]
+            # 모든 탭 리스트 갱신
+            for name, kws, _ in TAB_DEFS:
+                data = tab_state.get(name)
+                if not data:
+                    continue
+                new_keys = get_keys(kws)
+                data['keys'] = new_keys
+                data['lb'].delete(0, tk.END)
+                for k in new_keys:
+                    data['lb'].insert(tk.END, k)
+                if new_keys:
+                    data['lb'].selection_set(0)
+                    data['lb'].event_generate('<<ListboxSelect>>')
 
-            tk.Label(picker, text=f"{title} 관련 항목을 선택하세요",
-                     font=("Arial", 10, "bold")).pack(pady=(8, 4))
+        tk.Button(btn_bar, text="✔  추가", command=do_add,
+                  bg="#4CAF50", fg="white", padx=16, pady=5,
+                  font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_bar, text="🗑  삭제", command=do_delete,
+                  bg="#ffb3b3", fg="red", padx=12, pady=5,
+                  font=("Arial", 9)).pack(side=tk.LEFT, padx=4)
+        tk.Button(btn_bar, text="📱  HTML 모바일 내보내기",
+                  command=lambda: (dialog.destroy(), self.export_standards_html()),
+                  bg="#6c5ce7", fg="white", padx=12, pady=5,
+                  font=("Arial", 9)).pack(side=tk.LEFT, padx=4)
+        tk.Button(btn_bar, text="닫기", command=dialog.destroy,
+                  padx=12, pady=5).pack(side=tk.RIGHT, padx=10)
 
-            def get_keys_by_source(source):
-                """source: 'ASME' 또는 'ISO'"""
-                return [
-                    key for key in standards.keys()
-                    if key != "기타"
-                    and any(word.lower() in key.lower() for word in keywords)
-                    and (source.upper() in key.upper())
-                ]
+    def export_standards_html(self):
+        """앱 표준절차 프레임과 동일한 구조의 모바일 HTML 내보내기"""
+        import datetime, json as _json
+        out_path = filedialog.asksaveasfilename(
+            defaultextension=".html",
+            filetypes=[("HTML 파일", "*.html")],
+            initialfile="NDT_Standards_Mobile.html",
+            title="HTML 내보내기 위치 선택"
+        )
+        if not out_path:
+            return
 
-            # ── 탭 구성 ──
-            notebook = ttk.Notebook(picker)
-            notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=4)
+        # ── 탭 정의 (앱 add_standard와 동일) ──
+        TAB_DEFS = [
+            ("전체",  None,
+             "#1a237e", "🗂"),
+            ("PAUT",  ["PAUT","Phased Array","13588","11666","19285","Code Case"],
+             "#6c5ce7", "🔷"),
+            ("RT",    ["RT","Radiograph","17636","10675","디지털 RT"],
+             "#0984e3", "☢️"),
+            ("MT",    ["MT","Magnetic","17638","23278"],
+             "#00b894", "🔩"),
+            ("PT",    ["PT","Penetrant","3452","23277"],
+             "#e17055", "🔴"),
+            ("PMI",   ["PMI","Material Identification","15011","E1476","E2191","PCC-2"],
+             "#f39c12", "🟡"),
+            ("UT",    ["UT","Ultrasonic","TOFD"],
+             "#3498db", "🔵"),
+        ]
 
-            tab_data = {}  # {'ASME': {'frame':..,'combo':..,'var':..,'preview':..}, 'ISO': {...}}
+        def get_keys(keywords):
+            if keywords is None:
+                return list(self.standards.keys())
+            return [k for k in self.standards.keys()
+                    if any(w.lower() in k.lower() for w in keywords)]
 
-            def build_tab(source, bg_color):
-                keys = get_keys_by_source(source)
-                frame = tk.Frame(notebook, bg=bg_color)
-                notebook.add(frame, text=f"  {source}  ")
+        def safe(s):
+            return (s.replace("&","&amp;")
+                     .replace("<","&lt;")
+                     .replace(">","&gt;")
+                     .replace('"','&quot;'))
 
-                if not keys:
-                    tk.Label(frame, text=f"{source} 관련 항목이 없습니다.",
-                             fg="gray", bg=bg_color).pack(pady=30)
-                    tab_data[source] = {'keys': [], 'var': None, 'combo': None, 'preview': None}
-                    return
+        # ── 데이터 직렬화 (JS에 주입) ──
+        data_dict = {k: v for k, v in self.standards.items()}
+        tabs_data = []
+        for name, kws, color, icon in TAB_DEFS:
+            keys = get_keys(kws)
+            tabs_data.append({"name": name, "color": color, "icon": icon, "keys": keys})
 
-                var = tk.StringVar(value=keys[0])
-                combo = ttk.Combobox(frame, values=keys, textvariable=var,
-                                     state="readonly", width=85)
-                combo.pack(pady=(8, 4), padx=8)
+        js_data   = _json.dumps(data_dict,   ensure_ascii=False)
+        js_tabs   = _json.dumps(tabs_data,   ensure_ascii=False)
+        now       = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+        total     = len(self.standards)
 
-                preview = tk.Text(frame, wrap=tk.WORD, height=14, bg="#fafafa")
-                preview.pack(fill=tk.BOTH, expand=True, padx=8, pady=(0, 6))
+        html = f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NDT 표준 절차 참조집</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+html,body{{height:100%;overflow:hidden}}
+body{{font-family:'Noto Sans KR',system-ui,sans-serif;background:#f0f2f5;
+      color:#2d3436;display:flex;flex-direction:column}}
 
-                def refresh(*args):
-                    key = var.get()
-                    preview.config(state=tk.NORMAL)
-                    preview.delete("1.0", tk.END)
-                    preview.insert("1.0", standards.get(key, ""))
-                    preview.config(state=tk.DISABLED)
+/* ── 헤더 ── */
+header{{background:linear-gradient(135deg,#1a237e,#283593);color:#fff;
+        padding:10px 14px;flex-shrink:0;
+        box-shadow:0 2px 6px rgba(0,0,0,.35)}}
+header h1{{font-size:1rem;letter-spacing:.5px}}
+header p{{font-size:.68rem;opacity:.75;margin-top:2px}}
 
-                var.trace_add('write', refresh)
-                refresh()
+/* ── 탭바 ── */
+.tab-bar{{display:flex;background:#1e3c72;overflow-x:auto;
+          flex-shrink:0;scrollbar-width:none}}
+.tab-bar::-webkit-scrollbar{{display:none}}
+.tab-btn{{flex:none;padding:9px 14px;font-size:.78rem;
+          color:rgba(255,255,255,.65);border:none;background:none;
+          cursor:pointer;white-space:nowrap;
+          border-bottom:3px solid transparent;transition:all .2s}}
+.tab-btn.active{{color:#fff;border-bottom-color:#74b9ff;font-weight:700}}
 
-                tab_data[source] = {'keys': keys, 'var': var, 'combo': combo, 'preview': preview}
+/* ── 메인 레이아웃 ── */
+.main{{display:flex;flex:1;overflow:hidden}}
 
-            build_tab("ASME", "#fffde7")
-            build_tab("ISO",  "#e8f5e9")
+/* ── 좌측 리스트 ── */
+.sidebar{{width:300px;flex-shrink:0;display:flex;flex-direction:column;
+          background:#fff;border-right:1px solid #dfe6e9}}
+.search-wrap{{padding:8px 8px 4px;border-bottom:1px solid #eee}}
+.search-wrap input{{width:100%;padding:7px 10px;font-size:.82rem;
+                    border:1px solid #dfe6e9;border-radius:6px;outline:none}}
+.search-wrap input:focus{{border-color:#6c5ce7}}
+.list-count{{font-size:.7rem;color:#aaa;padding:4px 10px 2px}}
+.item-list{{flex:1;overflow-y:auto;padding:4px 0}}
+.item-btn{{width:100%;text-align:left;padding:9px 14px;font-size:.82rem;
+           border:none;background:none;cursor:pointer;
+           border-left:4px solid transparent;
+           border-bottom:1px solid #f1f2f6;
+           color:#2d3436;line-height:1.4;transition:all .15s}}
+.item-btn:hover{{background:#f8f9fa}}
+.item-btn.active{{background:#eff0ff;border-left-color:var(--tc);
+                  color:#1a237e;font-weight:600}}
+.item-btn.hidden{{display:none}}
 
-            # ── 공통 하단 버튼 ──
-            btn_frame = tk.Frame(picker)
-            btn_frame.pack(fill=tk.X, pady=6)
+/* ── 우측 미리보기 ── */
+.preview-pane{{flex:1;display:flex;flex-direction:column;overflow:hidden}}
+.preview-title{{padding:10px 16px;font-size:.9rem;font-weight:700;
+                background:#f8f9fa;border-bottom:2px solid var(--tc,#1a237e);
+                color:var(--tc,#1a237e);flex-shrink:0}}
+.preview-body{{flex:1;overflow-y:auto;padding:14px 18px;
+               font-size:.82rem;line-height:1.85;white-space:pre-wrap;
+               color:#2d3436}}
+.preview-empty{{display:flex;align-items:center;justify-content:center;
+                height:100%;color:#b2bec3;font-size:.9rem;flex-direction:column;gap:8px}}
 
-            def get_current_selection():
-                """현재 활성 탭의 선택 key 반환"""
-                tab_name = notebook.tab(notebook.select(), "text").strip()
-                src = tab_name  # "ASME" or "ISO"
-                data = tab_data.get(src)
-                if data and data['var']:
-                    return data['var'].get()
-                return None
+/* ── 모바일 (≤640px): 세로 전환 ── */
+@media(max-width:640px){{
+  html,body{{overflow:auto}}
+  .main{{flex-direction:column;overflow:visible}}
+  .sidebar{{width:100%;border-right:none;border-bottom:1px solid #dfe6e9;
+            max-height:240px}}
+  .preview-pane{{min-height:300px}}
+  .preview-body{{padding:10px 12px}}
+}}
+</style>
+</head>
+<body>
+<header>
+  <h1>📋 NDT 표준 절차 참조집</h1>
+  <p>생성일: {now} &nbsp;|&nbsp; 총 {total}개 항목</p>
+</header>
 
-            def add_selected_from_picker():
-                key = get_current_selection()
-                if not key:
-                    messagebox.showwarning("선택 없음", "추가할 항목을 선택하세요.", parent=picker)
-                    return
-                add_standard_content(key)
-                picker.destroy()
-                dialog.destroy()
+<div class="tab-bar" id="tabBar"></div>
 
-            def delete_selected_standard():
-                key = get_current_selection()
-                if not key:
-                    return
-                if not messagebox.askyesno("삭제 확인",
-                        f"'{key}' 항목을 목록에서 삭제하시겠습니까?", parent=picker):
-                    return
-                del standards[key]
-                # 탭 갱신
-                tab_name = notebook.tab(notebook.select(), "text").strip()
-                data = tab_data.get(tab_name)
-                if data:
-                    new_keys = get_keys_by_source(tab_name)
-                    data['keys'] = new_keys
-                    if data['combo'] and new_keys:
-                        data['combo']['values'] = new_keys
-                        data['var'].set(new_keys[0])
-                    elif not new_keys:
-                        picker.destroy()
-                        messagebox.showinfo("알림", "남은 항목이 없습니다.")
+<div class="main">
+  <div class="sidebar">
+    <div class="search-wrap">
+      <input id="searchBox" type="text" placeholder="🔍 항목 검색..."
+             oninput="filterList(this.value)">
+    </div>
+    <div class="list-count" id="listCount"></div>
+    <div class="item-list" id="itemList"></div>
+  </div>
+  <div class="preview-pane" id="previewPane">
+    <div class="preview-empty" id="previewEmpty">
+      <span style="font-size:2rem">📄</span>
+      <span>좌측 목록에서 항목을 선택하세요</span>
+    </div>
+    <div class="preview-title" id="previewTitle" style="display:none"></div>
+    <div class="preview-body"  id="previewBody"  style="display:none"></div>
+  </div>
+</div>
 
-            tk.Button(btn_frame, text="✔  추가", command=add_selected_from_picker,
-                      bg="#4CAF50", fg="white", padx=14, pady=4,
-                      font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=10)
-            tk.Button(btn_frame, text="🗑  삭제", command=delete_selected_standard,
-                      bg="#ffb3b3", fg="red", padx=12, pady=4,
-                      font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=5)
-            tk.Button(btn_frame, text="닫기", command=picker.destroy,
-                      padx=12, pady=4).pack(side=tk.RIGHT, padx=10)
+<script>
+const DATA = {js_data};
+const TABS = {js_tabs};
 
-        tk.Button(quick_frame, text="PAUT", width=10, bg="#f7d794", command=lambda: open_standard_picker("PAUT", ["PAUT", "Phased Array", "13588", "11666", "19285"]))
-        tk.Button(quick_frame, text="RT", width=10, bg="#c7ecee", command=lambda: open_standard_picker("RT", ["RT", "Radiographic", "17636", "10675"]))
-        tk.Button(quick_frame, text="MT", width=10, bg="#dff9fb", command=lambda: open_standard_picker("MT", ["MT", "Magnetic Particle", "17638", "23278"]))
-        tk.Button(quick_frame, text="PT", width=10, bg="#badc58", command=lambda: open_standard_picker("PT", ["PT", "Penetrant", "3452", "23277"]))
-        tk.Button(quick_frame, text="PMI", width=10, bg="#f9ca24", command=lambda: open_standard_picker("PMI", ["PMI", "Material Identification", "15011", "E1476", "PCC-2"]))
+let curTab  = 0;
+let curKey  = null;
 
-        for child in quick_frame.winfo_children():
-            child.pack(side=tk.LEFT, padx=5)
+/* ── 탭 생성 ── */
+const tabBar = document.getElementById('tabBar');
+TABS.forEach((t, i) => {{
+  const btn = document.createElement('button');
+  btn.className = 'tab-btn' + (i===0?' active':'');
+  btn.textContent = t.icon + ' ' + t.name;
+  btn.onclick = () => switchTab(i);
+  tabBar.appendChild(btn);
+}});
 
-        tk.Label(dialog, text="버튼을 눌러 해당 표준 내용을 선택해 추가하세요.", fg="gray").pack(pady=(12, 6))
-    
+function switchTab(i) {{
+  curTab = i;
+  curKey = null;
+  document.querySelectorAll('.tab-btn').forEach((b,j)=>b.classList.toggle('active',j===i));
+  document.getElementById('searchBox').value = '';
+  buildList('');
+  showEmpty();
+}}
+
+/* ── 리스트 렌더링 ── */
+function buildList(q) {{
+  const keys   = TABS[curTab].keys;
+  const color  = TABS[curTab].color;
+  const list   = document.getElementById('itemList');
+  const count  = document.getElementById('listCount');
+  list.innerHTML = '';
+  let shown = 0;
+  keys.forEach(k => {{
+    const match = !q || k.toLowerCase().includes(q) ||
+                  (DATA[k]||'').toLowerCase().includes(q);
+    const btn = document.createElement('button');
+    btn.className = 'item-btn' + (k===curKey?' active':'') + (match?'':' hidden');
+    btn.style.setProperty('--tc', color);
+    btn.textContent = k;
+    btn.onclick = () => selectItem(k, color);
+    list.appendChild(btn);
+    if(match) shown++;
+  }});
+  count.textContent = shown + '개 항목';
+}}
+
+/* ── 항목 선택 ── */
+function selectItem(key, color) {{
+  curKey = key;
+  document.querySelectorAll('.item-btn').forEach(b => {{
+    b.classList.toggle('active', b.textContent === key);
+  }});
+  const title = document.getElementById('previewTitle');
+  const body  = document.getElementById('previewBody');
+  const empty = document.getElementById('previewEmpty');
+  title.textContent = key;
+  title.style.setProperty('--tc', color);
+  body.textContent  = DATA[key] || '';
+  title.style.display = '';
+  body.style.display  = '';
+  empty.style.display = 'none';
+  body.scrollTop = 0;
+}}
+
+function showEmpty() {{
+  document.getElementById('previewTitle').style.display = 'none';
+  document.getElementById('previewBody').style.display  = 'none';
+  document.getElementById('previewEmpty').style.display = '';
+}}
+
+function filterList(q) {{
+  buildList(q.toLowerCase());
+}}
+
+/* ── 초기화 ── */
+buildList('');
+</script>
+</body>
+</html>"""
+
+        with open(out_path, 'w', encoding='utf-8') as f:
+            f.write(html)
+
+        if messagebox.askyesno("완료", f"HTML 파일 저장 완료:\n{out_path}\n\n지금 브라우저로 열어볼까요?"):
+            import webbrowser
+            webbrowser.open(out_path)
+
     def insert_standard(self, text_area, selected):
 
         if selected and selected in self.standards:
