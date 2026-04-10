@@ -1,4 +1,4 @@
-from docx import Document
+﻿from docx import Document
 from docx.oxml.ns import qn
 from docx.oxml import parse_xml
 from docx.text.paragraph import Paragraph
@@ -336,18 +336,63 @@ class NDTProcedureApp:
                 "적용 조건:\n"
                 "- 적용 코드: ASME Section VIII Div.1, Div.2 및 Section I\n"
                 "- 두께 범위: 20mm ≤ t ≤ 250mm\n"
-                "- 대상 용접부: 완전 용입 맞대기 용접 (Full Penetration Butt Weld)\n\n"
+                "- 대상 용접부: 완전 용입 맞대기 용접 (Full Penetration Butt Weld)\n"
+                "- 적용 재질 (P-Number):\n"
+                "  P-No.1(탄소강), 3(저합금), 4(Cr-Mo), 5A/5B(고Cr-Mo),\n"
+                "  6/7(마르텐사이트/페라이트 스테인리스), 8(오스테나이트 STS),\n"
+                "  9A/9B(Ni합금강), 10A/10F(고강도 저합금강)\n"
+                "- 용접 조인트 범주: Category A (종방향·환형 맞대기) 우선 적용\n"
+                "- 표면 상태: 검사 전 기계 가공 또는 연마 (Ra ≤ 6.3 μm 권장)\n"
+                "- 검사 온도: 15°C ~ 50°C (재질·절차에 따라 조정)\n\n"
+                "절차 자격 인정 (Procedure Qualification):\n"
+                "- ASME Section V, Article 4 Appendix III 준수 서면 절차 필수\n"
+                "- 실제 검사 두께와 동일한 데모 블록(Demonstration Block)으로\n"
+                "  절차 유효성 검증 (Blind Test / Mock-Up)\n"
+                "- POD (Probability of Detection): 목표 결함 크기에서 ≥ 90%\n"
+                "- 절차 변경(장비·프로브·각도·설정) 시 재자격 인정 필요\n\n"
+                "보정 블록 기준 (Calibration Block):\n"
+                "- 재질: 검사 대상과 동종 또는 음향 임피던스 동등 재질\n"
+                "- 기준 반사체 (SDH, Side Drilled Hole):\n"
+                "  · t ≤ 50mm  → Ø 1.5mm SDH\n"
+                "  · t > 50mm  → Ø 2.0mm SDH\n"
+                "- SDH 배치 깊이: t/4, t/2, 3t/4 (최소 3개 지점)\n"
+                "- 보정 주기: 검사 시작 전, 종료 후, 매 4시간마다, 장비 이동 시\n"
+                "- 온도 보정: 검사체와 보정 블록 온도 차 ±14°C 초과 시 재보정\n\n"
+                "스캔 커버리지 (Scan Coverage):\n"
+                "- 전체 용접 체적의 100% 커버리지 확보 필수\n"
+                "- HAZ(열영향부) 포함 모재 측 최소 t/4 이상 구간 검사\n"
+                "- 인덱스 방향 스캔 간격(Scan Increment): ≤ 1.0mm\n"
+                "- S-scan 빔 각도 범위: 40°~70° (스텝 ≤ 2° 권장)\n"
+                "- 모든 각도에서 -6dB 중첩(Beam Overlap) 유지\n\n"
+                "신호 수준 기준 (Amplitude Criteria):\n"
+                "- 기록 수준 (Recording Level)  : DAC 20% (−14 dB) 이상\n"
+                "- 평가 수준 (Evaluation Level) : DAC 50% (−6 dB) 이상 → 크기 측정\n"
+                "- 거부 수준 (Rejection Level)  : DAC 100% 초과 → 즉시 크기 평가\n"
+                "- S/N 비: ≥ 3:1 (9.5 dB) 유지 필수\n\n"
                 "결함 허용 기준 (Allowable Flaw Size):\n"
-                "아래 두 조건을 동시 만족 시 합격\n\n"
+                "아래 조건을 모두 만족 시 합격\n\n"
                 "  (1) 결함 높이 (a, Through-Thickness):\n"
                 "      a ≤ 0.1t  (단, a ≤ 6mm)\n\n"
                 "  (2) 결함 길이 (ℓ, Along Weld):\n"
                 "      ℓ ≤ 6a  (최대 50mm)\n\n"
                 "  (3) 표면 연결 결함 (Surface-Breaking):\n"
-                "      높이 기준 50% 감소 적용 → a_allow × 0.5\n\n"
+                "      허용 높이 기준 50% 감소 → a_allow × 0.5 적용\n\n"
+                "  (4) 결함 간격 규칙 (Flaw Spacing Rule):\n"
+                "      인접 결함 간격 S < max(a₁, a₂) 이면\n"
+                "      두 결함을 단일 결함으로 합산하여 평가\n\n"
                 "평면형 결함 (Planar Flaws - 균열, 용합불량, 용입불량):\n"
-                "  위 (1)(2)(3) 기준 동시 적용\n"
+                "  위 (1)~(4) 기준 동시 적용\n"
                 "  균열성 결함: 보수적 평가 필수, 재질의 K_IC, ΔK_th 확인\n\n"
+                "검사원 자격 (Personnel Qualification):\n"
+                "- ASNT SNT-TC-1A 또는 CP-189 기준 PAUT Level II 이상\n"
+                "- 해당 장비·소프트웨어 교육 이수 및 실기 평가 기록 보유\n"
+                "- 합부판정은 Level II 이상만 수행 가능\n\n"
+                "보고서 요건 (Reporting Requirements):\n"
+                "- 장비 식별(SN), 프로브 사양, 보정 데이터 첨부\n"
+                "- A-scan, S-scan 원시 데이터(Raw Data) 파일 보존\n"
+                "- 검사된 용접부 번호, 길이, 커버리지 맵 포함\n"
+                "- 지시 목록: 위치(X, Y, 깊이), 높이, 길이, 판정 결과\n"
+                "- 데이터 저장 형식: DICONDE 또는 제조사 전용 포맷\n\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 "■ 파괴역학 ECA (Engineering Critical Assessment)\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -607,6 +652,8 @@ class NDTProcedureApp:
         self.content_text.pack(fill=tk.BOTH, expand=True)
         content_scrollbar.config(command=self.content_text.yview)
         self.content_text.config(state=tk.DISABLED)
+        self.content_text.bind('<Button-1>', self._on_content_text_click)
+        self.content_text.bind('<Motion>', self._on_content_text_motion)
         
         # 이미지 미리보기 영역
         image_preview_label = tk.Label(right_frame, text="이미지 미리보기", font=("Arial", 11, "bold"))
@@ -650,6 +697,11 @@ class NDTProcedureApp:
             self.tree.selection_set(item)
             self.tree.focus(item)
 
+        try:
+            self._highlight_content_text_item(int(item))
+        except Exception:
+            pass
+
         values = self.tree.item(item, 'values')
         if not values:
             return
@@ -661,6 +713,47 @@ class NDTProcedureApp:
             content_index = int(item)
             if 0 <= content_index < len(self.content):
                 self.view_table_dialog(content_index)
+
+    def _highlight_content_text_item(self, idx):
+        """트리 선택 항목을 content_text에서 하이라이트 및 스크롤"""
+        tag = f"item_{idx}"
+        try:
+            ranges = self.content_text.tag_ranges(tag)
+            if ranges:
+                self.content_text.tag_remove("_hl_sel", "1.0", tk.END)
+                self.content_text.tag_add("_hl_sel", ranges[0], ranges[1])
+                self.content_text.tag_config("_hl_sel", background="#fff3cd")
+                self.content_text.see(ranges[0])
+        except Exception:
+            pass
+
+    def _on_content_text_click(self, event):
+        """요약 텍스트 클릭 → 트리뷰 해당 항목 선택 및 스크롤"""
+        try:
+            pos = self.content_text.index(f"@{event.x},{event.y}")
+            tags = self.content_text.tag_names(pos)
+            for tag in tags:
+                if tag.startswith("item_"):
+                    item_idx = int(tag[5:])
+                    iid = str(item_idx)
+                    if self.tree.exists(iid):
+                        self._highlight_content_text_item(item_idx)
+                        self.tree.selection_set(iid)
+                        self.tree.focus(iid)
+                        self.tree.see(iid)
+                    break
+        except Exception:
+            pass
+
+    def _on_content_text_motion(self, event):
+        """마우스 오버 시 커서 hand2 전환"""
+        try:
+            pos = self.content_text.index(f"@{event.x},{event.y}")
+            tags = self.content_text.tag_names(pos)
+            has_item = any(t.startswith("item_") for t in tags)
+            self.content_text.config(cursor="hand2" if has_item else "")
+        except Exception:
+            pass
 
     def get_insert_index(self, mode='after'):
         selected = self.tree.selection()
@@ -699,10 +792,14 @@ class NDTProcedureApp:
             if 0 <= index < len(self.content) and self.content[index].get('type') == 'text':
                 self.content[index]['text'] = new_text
                 self.refresh_content()
-                if str(index) in self.tree.get_children():
-                    self.tree.selection_set(str(index))
-                    self.tree.focus(str(index))
-                messagebox.showinfo("완료", "텍스트가 저장되었습니다.")
+                # 트리뷰 선택 복원
+                iid = str(index)
+                if self.tree.exists(iid):
+                    self.tree.selection_set(iid)
+                    self.tree.focus(iid)
+                    self.tree.see(iid)
+                # 오른쪽 요약에서 수정된 항목 하이라이트 & 스크롤
+                self._highlight_content_text_item(index)
                 dialog.destroy()
         
         # 상단 툴바 (저장 버튼)
@@ -785,9 +882,11 @@ class NDTProcedureApp:
         self.content_text.insert(tk.END, "\n---\n\n")
         
         text_counter = 1
-        for item in self.content:
+        for idx, item in enumerate(self.content):
             area = item.get('area', 'body')
             area_label = '' if area == 'body' else f"[{ '머릿글' if area == 'header' else '바닥글' }]\n"
+            tag = f"item_{idx}"
+            start_pos = self.content_text.index(tk.END)
             if item['type'] == 'text':
                 text = item.get('text', '').replace('\n', '\n')
                 style = item.get('style', 'Normal')
@@ -810,6 +909,9 @@ class NDTProcedureApp:
                 table_data = item['data']
                 table_text = f"{area_label}[표]\n" + "\n".join("\t".join(row) for row in table_data) + "\n\n"
                 self.content_text.insert(tk.END, table_text)
+            end_pos = self.content_text.index(tk.END)
+            if self.content_text.compare(start_pos, '<', end_pos):
+                self.content_text.tag_add(tag, start_pos, end_pos)
         
         self.content_text.config(state=tk.DISABLED)
     
