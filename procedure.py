@@ -2197,6 +2197,50 @@ class NDTProcedureApp:
             except Exception as e:
                 print(f"이미지 미리보기 오류: {e}")
     
+    def _renumber_sections(self):
+        """삭제 후 텍스트 내 섹션 번호 자동 재정렬 (N.0 / N.M 형식)
+        예) 7.0 삭제 → 8.0 Acceptance → 7.0 Acceptance 로 자동 변환
+        """
+        import re
+
+        # 패턴: 선행 공백 + 숫자.숫자 + (공백+내용 또는 줄끝)
+        section_re = re.compile(r'^(\s*)(\d+)\.(\d+)(\s[\s\S]*|$)', re.DOTALL)
+
+        # Pass 1: N.0 항목을 순서대로 수집 → 새 번호 매핑 생성
+        old_to_new = {}
+        new_top = 0
+        for item in self.content:
+            if item.get('type') != 'text':
+                continue
+            m = section_re.match(item.get('text', ''))
+            if m and m.group(3) == '0':
+                old_n = int(m.group(2))
+                if old_n not in old_to_new:   # 같은 번호 중복 방지
+                    new_top += 1
+                    old_to_new[old_n] = new_top
+
+        if not old_to_new or all(k == v for k, v in old_to_new.items()):
+            return False  # 섹션 없음 또는 변경 불필요
+
+        # Pass 2: N.M 텍스트 일괄 업데이트
+        changed = False
+        for item in self.content:
+            if item.get('type') != 'text':
+                continue
+            text = item.get('text', '')
+            m = section_re.match(text)
+            if not m:
+                continue
+            old_n = int(m.group(2))
+            if old_n in old_to_new:
+                new_n = old_to_new[old_n]
+                if new_n != old_n:
+                    # 선행 공백 + 새 번호 + .하위번호 + 나머지 내용 그대로 유지
+                    item['text'] = f'{m.group(1)}{new_n}.{m.group(3)}{m.group(4)}'
+                    changed = True
+
+        return changed
+
     def refresh_content(self):
         self.paragraphs = [item for item in self.content if item.get('type') == 'text']
         self.image_paths = [item.get('path', '') for item in self.content if item.get('type') == 'image']
@@ -2814,6 +2858,7 @@ buildList('');
 
         self._push_undo()
         del self.content[content_index]
+        self._renumber_sections()  # 섹션 번호 자동 재정렬 (N.0 삭제 시 N+1.0 → N.0)
         self.refresh_content()
         self.status_label.config(text=f"로드된 문서: 변경됨 | 포함된 사진: {len(self.image_paths)}개")
     
