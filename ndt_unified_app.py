@@ -12,6 +12,8 @@ import os
 import shutil
 import json
 import copy
+import subprocess
+from datetime import datetime
 
 def iter_block_items(parent, document_ref=None):
     """문단과 표를 원래 순서대로 순회"""
@@ -283,22 +285,259 @@ class NDTProcedureApp:
         
         # 창 크기 변경 이벤트 바인드
         self.root.bind('<Configure>', self.on_window_configure)
+        self.root.bind('<Control-z>', lambda e: self.undo())
+        self.root.bind('<Control-y>', lambda e: self.redo())
+        self.root.bind('<Control-Z>', lambda e: self.undo())
+        self.root.bind('<Control-Y>', lambda e: self.redo())
         
         self.paragraphs = []
         self.image_paths = []
         self.content = []
         self.source_file = None  # 원본 Word 파일 경로 (바닥글/헤더 이미지 보존용)
+        self._undo_stack = []   # (content deepcopy, source_file) 최대 30단계
+        self._redo_stack = []
+        self._tree_filter_var = tk.StringVar()
         self.standards = {
             "ASME Section V, Article 4 (PAUT 기본 절차)":
                 "ASME Section V, Article 4 - Ultrasonic Examination Methods (PAUT 기본 절차)\n\n적용 범위:\n위상배열 초음파검사(PAUT)의 핵심 절차 요구사항을 규정하는 기본 코드.\n\n주요 요구사항:\n- 위상배열 프로브 사양 및 선정 기준\n- 스캔 계획(Scan Plan) 수립 및 시뮬레이션\n- 보정 블록(Calibration Block) 규격 및 보정 절차\n- 감도 설정 및 DAC/TCG 적용\n- 결함 탐지, 위치, 크기 측정 기준\n- 기록 요구사항: A-scan, S-scan 데이터 보존\n\n검사원 자격: ASNT SNT-TC-1A 또는 CP-189 기준 Level II 이상\n보정 주기: 검사 전·후 및 8시간마다 보정 확인 필요",
             "ASME Section V, Article 4, Appendix III (PAUT 전용 요구사항)":
                 "ASME Section V, Article 4, Appendix III - Phased Array Ultrasonic Examination\n\n적용 범위:\n위상배열(Phased Array) 전용 부록으로, PA 시스템 고유 요구사항 규정.\n\n주요 요구사항:\n- 초점 법칙(Focal Law) 설계 및 검증\n- 섹터 스캔(S-scan) 각도 범위 및 해상도 설정\n- 선형 스캔(Linear Scan) 인덱스 포인트 설정\n- 유효 빔 프로파일 검증 (Beam Profile Verification)\n- 개구수(Aperture) 및 소자 수 설정 기준\n- 데이터 획득 설정: 피치, 펄스 반복 주파수\n\n비고: Article 4 본문과 함께 적용 필수",
             "ASME Section VIII Div.1, Appendix 12 (PAUT - 압력용기)":
-                "ASME Section VIII Division 1, Mandatory Appendix 12\n- Ultrasonic Examination of Welds (압력용기 용접부 초음파 검사)\n\n적용 범위:\n압력용기 용접부에 대한 RT 대체 UT(PAUT 포함) 적용 기준.\n\n주요 요구사항:\n- 검사 범위: 용접부 전체 체적 + 열영향부(HAZ) 포함\n- 탐촉자 선정: 용접 형상, 두께, 재질에 따라 결정\n- 보정: ASME 보정 블록 사용, 검사 두께별 감도 설정\n- 수용 기준: Table UW-53 적용\n- RT 대체 적용 시: 기술 근거 및 절차 승인 필요\n\n검사원 자격: ASNT Level II 이상",
+                "ASME Section VIII Division 1, Mandatory Appendix 12\n"
+                "Ultrasonic Examination of Welds — 압력용기 용접부 RT 대체 UT/PAUT 적용 기준\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 적용 범위\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 적용 대상: ASME Sec. VIII Div.1 압력용기 맞대기 용접부\n"
+                "- 목적: 방사선투과검사(RT)를 초음파검사(UT / PAUT)로 대체\n"
+                "- 적용 두께: t ≥ 1/2\" (13 mm) 이상 용접부\n"
+                "- 근거 조항: UW-11(a)(4), UW-53, Appendix 12\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ RT 대체 적용 조건 (UW-11(a)(4))\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "RT 대체가 허용되는 경우:\n"
+                "  ① 재료가 RT 불가 형상·재질인 경우\n"
+                "  ② 방사선 접근 불가 환경인 경우\n"
+                "  ③ PAUT 동등 검사 능력 기술 입증 및 절차 승인 완료 시\n\n"
+                "RT 대체 시 필수 문서:\n"
+                "  - 서면 UT/PAUT 절차서 (Written Procedure)\n"
+                "  - 절차 검증 기록 (Procedure Qualification Record)\n"
+                "  - 발주처 / AI (Authorized Inspector) 서면 승인\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 검사 범위\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 용접부 전체 체적 (Full Volumetric Coverage)\n"
+                "- 열영향부 (HAZ) 포함\n"
+                "- 최소 2방향 각도 스캔으로 용접 단면 100% 커버\n"
+                "- 루트부 / 캡부 / 측벽 용합 불량 탐지 각도 포함 필수\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 보정 블록 및 감도 (App. 12, Para. 12-4)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "기준 반사체:\n"
+                "  - SDH Ø 3/64\" (≈ 1.2 mm)\n"
+                "  - 배치 깊이: t/4, t/2, 3t/4\n\n"
+                "감도 기준:\n"
+                "  - 기록 수준: DAC 20% (−14 dB)\n"
+                "  - 평가 수준: DAC 50% (−6 dB)\n"
+                "  - 거부 수준: DAC 100% 초과\n\n"
+                "보정 블록 재질:\n"
+                "  - 검사 대상과 동일 P-Number 재질\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 수용 기준 (Table UW-53)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "불합격 지시 (Rejectable Indications):\n"
+                "  ① 균열 (Crack): 크기·길이 무관 전부 불합격\n"
+                "  ② 용합 불량 / 용입 불량:\n"
+                "     - t < 3/4\" (19 mm)  : 누적 길이 > 1\" (25 mm) 불합격\n"
+                "     - 3/4\" ≤ t < 2-1/4\" : 누적 길이 > t/3 불합격\n"
+                "     - t ≥ 2-1/4\" (57 mm): 누적 길이 > 3/4\" (19 mm) 불합격\n"
+                "     (임의 12\" (300 mm) 구간 내 누적 기준)\n"
+                "  ③ 내부 결함 (기공·슬래그 등):\n"
+                "     - 개별 지시 길이 > 1/4\" (6 mm) 불합격\n"
+                "     - 임의 6\" (150 mm) 내 합계 > 1/2\" (12 mm) 불합격\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 탐촉자 선정 기준\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 주파수: 2 ~ 5 MHz (재질·두께에 따라 선택)\n"
+                "- 굴절각: 용접 형상·결함 방향에 따라 45°~70° 복수 각도\n"
+                "- PAUT: S-scan으로 각도 범위 커버, Focal Law 사전 검증\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 검사원 자격\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- ASNT SNT-TC-1A 또는 CP-189 기준 UT Level II 이상\n"
+                "- 합부판정: UT Level II/III 자격자만 수행\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 기록 요건\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 절차서 번호, 장비 시리얼, 검사원 자격\n"
+                "- 결함 위치 (스캔 축, 깊이), 최대 진폭 (%DAC)\n"
+                "- 크기 측정 방법 및 결과\n"
+                "- 합부 판정 결과 및 근거 조항 (UW-53)\n"
+                "- A-scan / S-scan 디지털 데이터 보존",
             "ASME Section VIII Div.2, Para. 7.5.5 (PAUT - 고압용기)":
-                "ASME Section VIII Division 2, Paragraph 7.5.5 - Ultrasonic Examination\n\n적용 범위:\n고압용기 용접부 PAUT 체적 검사 요구사항.\n\n주요 요구사항:\n- 검사 범위: 전체 용접 체적 + HAZ 100% 검사\n- 절차: ASME Section V Article 4 및 Appendix III 준수\n- 보정: 동일 재질·두께의 기준 블록 사용\n- 감도: 2mm SDH(Side Drilled Hole) 기준 DAC 설정\n- 수용 기준: Table 7.5.5-1 적용\n- 기록: 디지털 데이터(A-scan, S-scan) 전체 보존\n\n검사원 자격: ASNT Level II 또는 III",
+                "ASME Section VIII Division 2, Paragraph 7.5.5 - Ultrasonic Examination\n"
+                "고압용기 용접부 PAUT 체적 검사 요구사항\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 적용 범위\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 적용 대상: ASME Sec. VIII Div.2 고압용기 완전 용입 맞대기 용접부\n"
+                "- Div.2는 Div.1 대비 설계 허용 응력을 높게 허용하는 대신\n"
+                "  검사·제조 요건이 더 엄격하게 적용됨\n"
+                "- 근거 조항: Para. 7.5.5, Table 7.5.5-1\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 검사 범위\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 전체 용접 체적 (Full Volumetric) + HAZ 100% 검사 필수\n"
+                "- 루트부 / 캡부 / 측벽 용합 불량 탐지 각도 모두 포함\n"
+                "- 스캔 커버리지: 용접 단면 100% 입증 필수 (Scan Plan 문서화)\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 절차 요건\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 서면 절차서: ASME Sec. V Article 4 + Appendix III 준수\n"
+                "- 스캔 계획 (Scan Plan): 프로브 배치, 각도, 인덱스 포인트 명시\n"
+                "- 절차 검증 (Procedure Qualification): 보정 블록으로 사전 검증\n"
+                "- Focal Law 검증: 설계된 각도·깊이 범위에서 SDH 탐지 확인\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 보정 블록 및 감도 (Table 7.5.5-1 기준)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "기준 반사체:\n"
+                "  - SDH Ø 2.0 mm\n"
+                "  - 배치 깊이: t/4, t/2, 3t/4\n"
+                "  - 재질: 검사 대상과 동일 P-Number\n\n"
+                "감도 기준:\n"
+                "  - 기준 에코: SDH Ø 2.0 mm = 80% FSH (Full Screen Height)\n"
+                "  - 기록 수준: DAC 20% (−14 dB)\n"
+                "  - 평가 수준: DAC 50% (−6 dB)\n"
+                "  - 검사 감도: 평가 수준 +6 dB 증폭 후 스캔\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 수용 기준 (Table 7.5.5-1)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "【평면형 결함 (Planar Defects)】\n"
+                "  - 균열 / 용합 불량 / 용입 불량: 크기 무관 전부 불합격\n\n"
+                "【체적형 결함 (Volumetric Defects)】\n"
+                "  결함 높이(a) 및 길이(ℓ) 기준:\n"
+                "  ┌────────────────┬───────────────────┐\n"
+                "  │ 결함 높이 (a)   │ 허용 길이 (ℓ)      │\n"
+                "  ├────────────────┼───────────────────┤\n"
+                "  │ a ≤ 3 mm       │ ℓ ≤ 6 mm          │\n"
+                "  │ 3 mm < a ≤ 6 mm│ ℓ ≤ 2a            │\n"
+                "  │ a > 6 mm       │ 불합격              │\n"
+                "  └────────────────┴───────────────────┘\n\n"
+                "【표면 연결 결함 (Surface-Breaking)】\n"
+                "  ┌────────────────┬───────────────────┐\n"
+                "  │ 결함 높이 (a)   │ 허용 길이 (ℓ)      │\n"
+                "  ├────────────────┼───────────────────┤\n"
+                "  │ a ≤ 1.5 mm     │ ℓ ≤ 6 mm          │\n"
+                "  │ a > 1.5 mm     │ 불합격              │\n"
+                "  └────────────────┴───────────────────┘\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 결함 크기 측정 요건\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 결함 높이(a): −6 dB drop법 또는 TOFD 병행 (정확도 ±1 mm)\n"
+                "- 결함 길이(ℓ): −6 dB drop법 또는 −20 dB 끝점법\n"
+                "- 위치 정확도: 스캔 축·인덱스 축 ±1 mm 이내\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 탐촉자 선정 기준\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 주파수: 2 ~ 5 MHz (두께·재질에 따라 선택)\n"
+                "- 굴절각: 용접 형상·결함 방향에 따라 45°~70° 복수 적용\n"
+                "- PAUT S-scan: 각도 범위 내 Focal Law 사전 검증 필수\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ Div.1 vs Div.2 주요 차이점\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "┌──────────────────┬──────────────────┬──────────────────┐\n"
+                "│ 항목              │ Div.1 App.12     │ Div.2 Para.7.5.5 │\n"
+                "├──────────────────┼──────────────────┼──────────────────┤\n"
+                "│ 기준 반사체 SDH   │ Ø 3/64\" (1.2mm) │ Ø 2.0 mm         │\n"
+                "│ 수용 기준 조항    │ Table UW-53      │ Table 7.5.5-1    │\n"
+                "│ 설계 허용 응력    │ 낮음 (보수적)     │ 높음 (엄격 검사) │\n"
+                "│ 체적형 결함 기준  │ 길이 기반         │ 높이(a)+길이(ℓ)  │\n"
+                "└──────────────────┴──────────────────┴──────────────────┘\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 검사원 자격\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- ASNT SNT-TC-1A 또는 CP-189 기준 UT Level II 이상\n"
+                "- 합부판정: UT Level II/III 자격자만 수행\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 기록 요건\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- A-scan + S-scan / B-scan 디지털 데이터 전체 보존\n"
+                "- 결함 위치 (스캔 축, 인덱스 축, 깊이 상단·하단)\n"
+                "- 결함 크기 (높이 a, 길이 ℓ), 최대 진폭 (%DAC)\n"
+                "- 크기 측정 방법 (−6 dB / TOFD 등)\n"
+                "- 합부 판정 결과 및 근거 조항 (Table 7.5.5-1)",
             "ASME B31.1 (PAUT - 발전 배관)":
-                "ASME B31.1 Power Piping - PAUT 적용 요구사항\n\n적용 범위:\n발전소 배관 용접부(증기, 급수, 블로우다운 등) PAUT 검사.\n\n주요 요구사항:\n- 절차: ASME Section V Article 4 + Appendix III 기반 서면 절차\n- 수용 기준: Table 136.4.1 (결함 유형별 기준)\n- 검사 범위: 136.5 조항 용접부 검사 요구사항 준수\n- RT 대체: 동등 검사 능력 기술 입증 시 PAUT로 RT 대체 가능\n- 자격: SNT-TC-1A Level II/III\n- 보정 블록: IIW 블록 또는 ASME 보정 블록\n- 기록: 결함 위치, 크기, 평가 결과, 검사 조건 문서화\n- 보고서: 절차, 장비, 인원, 결과 및 판정 포함",
+                "ASME B31.1 Power Piping - PAUT 적용 요구사항\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 적용 범위\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 적용 대상: 발전소 배관 용접부 (증기, 급수, 블로우다운 등)\n"
+                "- 근거 조항: B31.1 Para. 136.4, Table 136.4.1\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 보정 블록 (Calibration Block)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "B31.1은 보정 블록으로 두 가지를 허용:\n\n"
+                "【1】 IIW Block (International Institute of Welding Block)\n"
+                "  - 규격: ISO 2400\n"
+                "  - 구조물:\n"
+                "    · Ø 1.5 mm FBH (Flat Bottom Hole) — 거리 진폭 교정용\n"
+                "    · R25 / R100 mm 곡면 — 음속 측정 및 영점 설정용\n"
+                "    · 50 mm 두께 범위 홈 — 굴절각 확인용 (45°/60°/70°)\n"
+                "  - 주요 용도:\n"
+                "    · 탐촉자 굴절각 확인\n"
+                "    · 음속(Velocity) 측정\n"
+                "    · 영점(Zero Offset) 설정\n"
+                "    · 표면 파형 및 빔 프로파일 확인\n"
+                "  - 재질: 탄소강 (ASME SA-36 동등)\n"
+                "  - 제한: 현장 두께별 SDH 기반 DAC 설정 불가 → 감도 설정 시 ASME Basic Block 병행 필요\n\n"
+                "【2】 ASME Basic Calibration Block\n"
+                "  - 규격: ASME Section V, Article 4, Table T-434.2.1\n"
+                "  - 구조물: SDH (Side Drilled Hole) — 두께별 직경 기준 적용\n"
+                "    ┌─────────────────────┬────────────────────┐\n"
+                "    │ 검사 두께 (t)        │ SDH 직경            │\n"
+                "    ├─────────────────────┼────────────────────┤\n"
+                "    │ t ≤ 1\"  (25 mm)     │ Ø 3/32\" (2.4 mm)  │\n"
+                "    │ 1\" < t ≤ 2\" (50 mm)│ Ø 1/8\"  (3.2 mm)  │\n"
+                "    │ 2\" < t ≤ 4\" (100mm)│ Ø 3/16\" (4.8 mm)  │\n"
+                "    │ t > 4\"  (100 mm↑)  │ Ø 1/4\"  (6.4 mm)  │\n"
+                "    └─────────────────────┴────────────────────┘\n"
+                "  - SDH 배치 깊이: t/4, t/2, 3t/4 (최소 3개 지점)\n"
+                "  - 주요 용도:\n"
+                "    · DAC (Distance Amplitude Correction) 곡선 작성\n"
+                "    · 검사 감도 (Search Sensitivity) 설정\n"
+                "    · 거리별 진폭 보정 기준 확립\n"
+                "  - 재질: 검사 대상과 동일 P-Number 재질\n\n"
+                "【블록 선택 기준 요약】\n"
+                "  ┌──────────────────┬────────────────┬──────────────────┐\n"
+                "  │ 용도              │ IIW Block       │ ASME Basic Block │\n"
+                "  ├──────────────────┼────────────────┼──────────────────┤\n"
+                "  │ 굴절각 확인       │ ✔ 적합          │ 불가             │\n"
+                "  │ 음속 / 영점       │ ✔ 적합          │ 불가             │\n"
+                "  │ DAC 감도 설정     │ 제한적          │ ✔ 적합           │\n"
+                "  │ 두께별 SDH 탐지   │ 불가            │ ✔ 적합           │\n"
+                "  └──────────────────┴────────────────┴──────────────────┘\n"
+                "  → 실무: IIW로 탐촉자 검증 + ASME Basic Block으로 DAC 설정\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 감도 기준\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- DAC 작성 후 검사 감도: +6 dB 추가 (Search Level)\n"
+                "- 기록 수준: DAC 20% (−14 dB)\n"
+                "- 평가 수준: DAC 50% (−6 dB)\n"
+                "- 거부 수준: DAC 100% 초과\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 보정 주기\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 검사 시작 전 / 매 8시간마다 / 검사 종료 후\n"
+                "- 장비 교체·온도 차 ±14°C 초과 시 재보정\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 절차 / 수용 기준 / 자격\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 절차: ASME Sec. V Article 4 + Appendix III 기반 서면 절차\n"
+                "- 수용 기준: Table 136.4.1 (결함 유형별 기준)\n"
+                "- RT 대체: 동등 검사 능력 기술 입증 시 PAUT로 RT 대체 가능\n"
+                "- 자격: ASNT SNT-TC-1A Level II/III\n"
+                "- 기록: 결함 위치, 크기, 평가 결과, 검사 조건 문서화\n"
+                "- 보고서: 절차, 장비, 인원, 결과 및 판정 포함",
             "ASME B31.3 (PAUT - 공정 배관)":
                 "ASME B31.3 Process Piping - PAUT 적용 요구사항\n\n적용 범위:\n석유화학·정유·가스 플랜트 공정 배관 용접부 PAUT 검사.\n\n주요 요구사항:\n- 배관 등급별 검사 범위:\n  · Normal Fluid Service: 용접부의 5% 이상\n  · Category M / High Pressure: 100% 검사\n- 절차: ASME Section V Article 4 준수\n- 수용 기준: Table 341.3.2 적용\n- RT 대체: PAUT로 RT 대체 시 동등 이상 감도 입증 필요\n- 자격: ASNT SNT-TC-1A Level II 이상\n- 결과 기록: 검사 부위, 결함 지시, 판정 결과 문서화",
             "ASME Section XI (PAUT - 원자력 가동 중 검사)":
@@ -306,19 +545,309 @@ class NDTProcedureApp:
             "ASME Section I (PAUT - 보일러)":
                 "ASME Section I - Power Boilers (PAUT 적용)\n\n적용 범위:\n발전용 보일러 동체, 헤더, 고온 배관 용접부 검사.\n\n주요 요구사항:\n- 적용 부위: 보일러 동체 용접부, 드럼, 노즐, 헤더 용접부\n- 절차: ASME Section V Article 4 기반\n- 수용 기준: PW-51 조항 적용\n- 두께 범위: 주로 25mm 이상 후판 용접부에 PAUT 적용\n- 보정: 검사 두께에 맞는 ASME 보정 블록 사용\n- 자격: ASNT SNT-TC-1A Level II 이상\n- 기록: 스캔 데이터 및 판정 결과 보존",
             "ASME Sec. VIII Div.2 Para. 7.5.5 (Ultrasonic Examination)": 
-                "ASME Section VIII Division 2, Paragraph 7.5.5: Ultrasonic Examination\n\nUltrasonic examination shall be performed in accordance with the requirements of Article 7.5. The examination shall be conducted by qualified personnel using calibrated equipment. Acceptance criteria shall meet the requirements of Table 7.5.5-1.",
+                "ASME Section VIII Division 2, Paragraph 7.5.5: Ultrasonic Examination\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 원문 (Original Text)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "\"Ultrasonic examination shall be performed in accordance with the\n"
+                "requirements of Article 7.5. The examination shall be conducted by\n"
+                "qualified personnel using calibrated equipment. Acceptance criteria\n"
+                "shall meet the requirements of Table 7.5.5-1.\"\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 조항 해설\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "① \"in accordance with the requirements of Article 7.5\"\n"
+                "   → Article 7.5 전체가 상위 요건\n"
+                "   - Para. 7.5.1: 일반 요건 (검사 범위, 절차 승인)\n"
+                "   - Para. 7.5.2: 검사원 자격 (ASNT Level II/III)\n"
+                "   - Para. 7.5.3: 검사 장비 및 보정 요건\n"
+                "   - Para. 7.5.4: RT 요건\n"
+                "   - Para. 7.5.5: UT / PAUT 요건 (본 조항)\n\n"
+                "② \"qualified personnel\"\n"
+                "   → ASNT SNT-TC-1A 또는 CP-189 기준 UT Level II 이상\n"
+                "   → 합부판정은 반드시 Level II / III 자격자만 수행\n\n"
+                "③ \"calibrated equipment\"\n"
+                "   → 검사 전·후 및 매 8시간마다 보정 확인 필수\n"
+                "   → 보정 기준: SDH Ø 2.0 mm (t/4, t/2, 3t/4)\n"
+                "   → 기준 에코: 80% FSH (Full Screen Height)\n\n"
+                "④ \"Acceptance criteria shall meet the requirements of Table 7.5.5-1\"\n"
+                "   → 수용 기준은 오직 Table 7.5.5-1 기준만 적용\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ Table 7.5.5-1 수용 기준 (Acceptance Criteria)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "【평면형 결함 (Planar)】\n"
+                "  - 균열 / 용합 불량 / 용입 불량: 크기 무관 전부 불합격\n\n"
+                "【체적형 결함 (Volumetric) — 내부】\n"
+                "  ┌────────────────┬───────────────┐\n"
+                "  │ 결함 높이 (a)   │ 허용 길이 (ℓ) │\n"
+                "  ├────────────────┼───────────────┤\n"
+                "  │ a ≤ 3 mm       │ ℓ ≤ 6 mm      │\n"
+                "  │ 3 mm < a ≤ 6 mm│ ℓ ≤ 2a        │\n"
+                "  │ a > 6 mm       │ 불합격         │\n"
+                "  └────────────────┴───────────────┘\n\n"
+                "【표면 연결 결함 (Surface-Breaking)】\n"
+                "  ┌────────────────┬───────────────┐\n"
+                "  │ 결함 높이 (a)   │ 허용 길이 (ℓ) │\n"
+                "  ├────────────────┼───────────────┤\n"
+                "  │ a ≤ 1.5 mm     │ ℓ ≤ 6 mm      │\n"
+                "  │ a > 1.5 mm     │ 불합격         │\n"
+                "  └────────────────┴───────────────┘\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ Div.1 vs Div.2 수용 기준 비교\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "┌──────────────────┬──────────────────┬──────────────────┐\n"
+                "│ 항목              │ Div.1 (UW-53)    │ Div.2 (7.5.5-1)  │\n"
+                "├──────────────────┼──────────────────┼──────────────────┤\n"
+                "│ 평가 기준         │ 결함 길이 위주    │ 높이(a)+길이(ℓ)  │\n"
+                "│ 평면형 결함       │ 전부 불합격       │ 전부 불합격      │\n"
+                "│ 체적형 최대 허용  │ 길이 ≤ t/3 등    │ a≤6mm, ℓ≤2a     │\n"
+                "│ 표면 결함         │ 별도 언더컷 기준  │ a≤1.5mm 엄격     │\n"
+                "│ 설계 허용 응력    │ 낮음 (보수적)     │ 높음 (엄격 검사) │\n"
+                "└──────────────────┴──────────────────┴──────────────────┘",
             "ASME Sec. VIII Div.2 Para. 7.5.4 (Radiographic Examination)": 
                 "ASME Section VIII Division 2, Paragraph 7.5.4: Radiographic Examination\n\nRadiographic examination shall be performed in accordance with the requirements of Article 7.5. The examination shall be conducted by qualified personnel using approved techniques. Acceptance criteria shall meet the requirements of Table 7.5.4-1.",
             "ASME B31.1 PAUT 관련 코드":
                 "ASME B31.1 PAUT 관련 코드\n\n- 적용 기준: ASME B31.1 Table 136.4.1 수용 기준.\n- 검사 범위: B31.1 136.5 용접부 검사 요구 사항 준수.\n- 절차 기준: ASME V Article 4 및 Appendix III에 따른 서면 시험 절차.\n- 자격: SNT-TC-1A 또는 ASNT Level II / III 자격.\n- 장비 보정: IIW 블록 또는 ASME 보정 블록을 사용한 보정 및 감도 확인.\n- 스캔 범위: 용접부 및 열영향부 전체 체적 커버리지.\n- 기록: 결함 위치, 크기, 평가 결과, 테스트 조건을 포함한 문서화.\n- 보고서: 절차 식별, 장비, 인원, 검사 결과 및 판정 포함.",
             "ASME B31.1 PAUT (Phased Array Ultrasonic Testing)": 
-                "ASME B31.1 Power Piping - PAUT Requirements\n\n1. Procedure: Written procedure in accordance with ASME V Article 4 and Appendix III.\n2. Personnel: Qualified Level II or III per SNT-TC-1A, ASNT, or equivalent qualification program.\n3. Equipment: Calibrated phased array ultrasonic testing system with appropriate probes and wedge angles.\n4. Calibration: Use reference blocks such as IIW or ASME calibration blocks and perform sensitivity checks.\n5. Scanning: Ensure full volumetric coverage of the weld and heat-affected zone.\n6. Evaluation: Apply acceptance criteria in ASME B31.1 Table 136.4.1 or project-specific criteria.\n7. Records: Maintain complete inspection records, including defect sizing, location, probe data, and disposition.\n8. Reporting: Include procedure identification, equipment, personnel, and results in the test report.",
+                "ASME B31.1 Power Piping - PAUT Requirements (8대 필수 요건 상세)\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "1. Procedure (서면 절차서)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Written procedure in accordance with ASME V Article 4 and Appendix III.\n"
+                "필수 기재 항목:\n"
+                "  - 검사 범위 및 적용 코드 (B31.1 Para. 136.4)\n"
+                "  - 탐촉자 사양 (주파수, 소자 수, 피치, 굴절각 범위)\n"
+                "  - Focal Law 설계 및 검증 방법\n"
+                "  - S-scan / Linear scan 스캔 계획 (Scan Plan)\n"
+                "  - 보정 블록 사양 및 보정 절차\n"
+                "  - 감도 설정 방법 (DAC/TCG)\n"
+                "  - 합부판정 기준 (Table 136.4.1 참조)\n"
+                "  - 기록 및 보고 요건\n"
+                "  → 절차서는 AI (Authorized Inspector) 또는 발주처 사전 승인 필요\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "2. Personnel (검사원 자격)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Qualified Level II or III per SNT-TC-1A, ASNT, or equivalent.\n"
+                "  - Level II: 검사 수행 + 합부판정 가능\n"
+                "  - Level III: 절차 개발·승인 + Level II 감독\n"
+                "  - 자격 유효기간: SNT-TC-1A 기준 5년 (사내 갱신 프로그램)\n"
+                "  - PAUT 전용 실무 훈련 시간 별도 요구 (UT 경력 포함)\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "3. Equipment (장비)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Calibrated PAUT system with appropriate probes and wedge angles.\n"
+                "  - PA 인스트루먼트: 멀티채널 위상배열 장비 (최소 16~32 채널)\n"
+                "  - 프로브: 검사 두께·재질에 맞는 주파수 (2~5 MHz)\n"
+                "  - 웨지: 굴절각 45°~70° (검사 형상에 따라 선택)\n"
+                "  - 스캐너: 인코더 부착 (위치 정확도 ±1 mm)\n"
+                "  - 장비 교정 주기: 제조사 권고 주기 준수 (보통 1년)\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "4. Calibration (보정)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Use IIW or ASME calibration blocks and perform sensitivity checks.\n"
+                "  IIW Block 용도:\n"
+                "    - 굴절각 확인 / 음속 측정 / 영점 설정\n"
+                "  ASME Basic Block (Art.4 Table T-434.2.1) 용도:\n"
+                "    - SDH 기반 DAC 곡선 작성 / 검사 감도 설정\n"
+                "  보정 주기:\n"
+                "    - 검사 시작 전 / 매 8시간마다 / 검사 종료 후\n"
+                "    - 장비 이동 또는 온도 차 ±14°C 초과 시 재보정\n"
+                "  유효성 기준:\n"
+                "    ±2 dB 이내 → 유효 / ±4 dB 초과 → 전체 재검사\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "5. Scanning (스캔)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Ensure full volumetric coverage of the weld and HAZ.\n"
+                "  - 용접부 전체 단면 체적 (루트 / 충전부 / 캡) 100% 커버\n"
+                "  - 열영향부 (HAZ) 양쪽 포함\n"
+                "  - S-scan: 각도 범위 내 용접 단면 연속 스캔\n"
+                "  - 최소 2방향 이상 스캔 (종방향·횡방향 결함 모두 탐지)\n"
+                "  - 스캔 커버리지 도해 (Coverage Map) 문서화 필수\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "6. Evaluation (평가)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Apply acceptance criteria in Table 136.4.1 or project-specific criteria.\n"
+                "  DAC 진폭 기준:\n"
+                "    - DAC 20% 미만     → 기록 불요\n"
+                "    - DAC 20% ~ 100%  → 기록 + 크기 측정 후 Table 136.4.1 적용\n"
+                "    - DAC 100% 초과    → 불합격 추정, 크기 측정 필수\n"
+                "  결함 크기 측정법:\n"
+                "    - −6 dB 강하법 (길이·높이)\n"
+                "    - −20 dB 끝점법 (길이)\n"
+                "    - TOFD 병행 가능 (높이 정밀 측정)\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "7. Records (기록)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Maintain complete inspection records including defect sizing,\n"
+                "location, probe data, and disposition.\n"
+                "  필수 기록 항목:\n"
+                "    - 절차서 번호 및 개정 이력\n"
+                "    - 장비 시리얼 번호 및 교정 유효기간\n"
+                "    - 검사원 이름 및 자격 번호\n"
+                "    - 보정 블록 사양 및 보정 결과\n"
+                "    - 결함 위치 (스캔 축, 인덱스 축, 깊이)\n"
+                "    - 결함 크기 (길이 ℓ, 높이 a) 및 측정 방법\n"
+                "    - 최대 에코 진폭 (%DAC)\n"
+                "    - 합부 판정 결과 (합격/불합격) 및 근거 조항\n"
+                "    - A-scan / S-scan 디지털 데이터 파일 보존\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "8. Reporting (보고서)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Include procedure identification, equipment, personnel,\n"
+                "and results in the test report.\n"
+                "  보고서 필수 포함 항목:\n"
+                "    - 검사 절차서 번호 및 개정 번호\n"
+                "    - 적용 코드 및 수용 기준 조항\n"
+                "    - 장비 명칭, 모델, 시리얼, 교정 유효기간\n"
+                "    - 검사원 성명, 자격 등급, 자격 번호\n"
+                "    - 검사 일시 및 장소\n"
+                "    - 검사 대상 (용접부 번호, 이음 유형, 두께)\n"
+                "    - 검사 결과 요약 (지시 목록 및 합부 판정)\n"
+                "    - 검사원 서명 및 Level III 확인 서명",
             "ASME B31.1 PAUT 필수 항목":
                 "ASME B31.1 PAUT 필수 항목\n\n- 검사 절차: ASME V Article 4, Appendix III에 따른 서면 절차.\n- 자격: SNT-TC-1A 또는 ASNT 기준의 Level II/III 검사자.\n- 장비: 적절한 위상배열 초음파 시스템 및 프로브.\n- 보정: IIW 블록 또는 ASME 보정 블록을 이용한 보정 및 감도 확인.\n- 스캔: 용접부와 열영향부의 전체 체적 커버리지.\n- 평가: B31.1 Table 136.4.1 기준 또는 지정된 수용 기준.\n- 기록: 결함 위치, 크기, 평가 및 처분을 포함한 완전한 기록.\n- 보고: 절차, 장비, 인원, 결과를 포함한 보고서 작성.",
             "ASME B31.1 PAUT 합부판정 기준 (Table 136.4.1)":
-                "ASME B31.1 PAUT 합부판정 기준 - Table 136.4.1\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n■ 불합격 지시 (Unacceptable Indications)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n[1] 균열 (Cracks)\n- 모든 균열 지시: 크기·길이 무관하게 전부 불합격\n\n[2] 완전 용입 불량 (Incomplete Penetration)\n- 두께 기준:\n  · t < 19mm : 길이 합계 > 25mm 이상 불합격\n  · 19mm ≤ t < 57mm : 길이 합계 > t/3 이상 불합격  \n  · t ≥ 57mm : 길이 합계 > 19mm 이상 불합격\n  (임의 300mm 구간 내 누적 길이 기준)\n\n[3] 용합 불량 (Incomplete Fusion)\n- 완전 용입 불량과 동일 기준 적용\n\n[4] 내부 결함 (Internal Defects - 기공, 슬래그 등)\n- 개별 지시 길이 > 6mm 불합격\n- 임의 150mm 구간 내 지시 길이 합계 > 12mm 불합격\n- 단, 최대 개별 지시 < 3mm이고 군집 면적 < 6cm² 이하는 허용\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n■ 합격 조건 (Acceptable Indications)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n- 위 불합격 기준에 해당하지 않는 모든 지시\n- PAUT 진폭 기반 평가: DAC(Distance Amplitude Correction) 20% 이하 지시는 기록 불요\n- 20~100% DAC: 기록 필요, 크기 측정 후 위 기준과 비교 평가\n- 100% DAC 초과: 불합격 추정, 크기 측정·평가 필수\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n■ PAUT 특수 고려사항\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n- 결함 크기 측정: -6dB drop 또는 -20dB drop 법 적용\n- 표면 결함 연결 여부 확인 필수\n- 체적 커버리지: 전체 용접 단면의 100% 스캔 데이터 확보",
+                "ASME B31.1 Power Piping - Para. 136.4 및 Table 136.4.1 상세\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ Para. 136.4 구조 (검사 요건 계층)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Para. 136.4.1  검사 방법 선택 기준\n"
+                "  → RT, UT(PAUT 포함), 또는 대체 NDE 선택 근거 규정\n"
+                "  → RT 대체 시 동등 검사 능력 입증 필수\n\n"
+                "Para. 136.4.2  검사 범위 (Required Examination)\n"
+                "  → 검사 대상 용접부 유형 및 비율 규정\n"
+                "  → 진보적 검사 (Progressive Examination) 조항:\n"
+                "     최초 용접부 검사 불합격 시 추가 검사 범위 확대\n\n"
+                "Para. 136.4.3  수용 기준 (Acceptance Criteria)\n"
+                "  → \"Acceptance criteria shall be in accordance with\n"
+                "      Table 136.4.1\"\n"
+                "  → Table 136.4.1이 B31.1의 유일한 공식 합부판정 기준\n\n"
+                "Para. 136.4.4  재검사 (Re-examination)\n"
+                "  → 불합격 지시 수정 후 재검사 절차\n"
+                "  → 동일 검사 방법·절차로 재실시\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ Table 136.4.1 — 불합격 지시 기준\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "【1】 균열 (Cracks)\n"
+                "  → 크기·길이·위치 무관 전부 불합격\n\n"
+                "【2】 완전 용입 불량 (Incomplete Penetration) / 용합 불량 (Incomplete Fusion)\n"
+                "  두께(t)별 임의 300 mm 구간 내 누적 길이 기준:\n"
+                "  ┌──────────────────────┬─────────────────────────────┐\n"
+                "  │ 검사 두께 (t)         │ 최대 허용 누적 길이          │\n"
+                "  ├──────────────────────┼─────────────────────────────┤\n"
+                "  │ t < 19 mm (3/4\")     │ 25 mm (1\") 이하             │\n"
+                "  │ 19 mm ≤ t < 57 mm    │ t/3 이하                    │\n"
+                "  │ t ≥ 57 mm (2-1/4\")   │ 19 mm (3/4\") 이하           │\n"
+                "  └──────────────────────┴─────────────────────────────┘\n"
+                "  → IP / IF 동일 기준 적용\n\n"
+                "【3】 내부 결함 (Porosity / Slag Inclusion 등)\n"
+                "  - 개별 지시 길이 > 6 mm (1/4\") → 불합격\n"
+                "  - 임의 150 mm (6\") 구간 내 지시 길이 합계 > 12 mm → 불합격\n"
+                "  예외 허용 (모두 충족 시):\n"
+                "    · 최대 개별 지시 < 3 mm (1/8\")\n"
+                "    · 군집 면적 < 6 cm² (1 in²) 이하\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ PAUT 진폭 기반 평가 (DAC 기준)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "┌──────────────────┬────────────────────────────────────┐\n"
+                "│ 진폭 수준         │ 조치                                │\n"
+                "├──────────────────┼────────────────────────────────────┤\n"
+                "│ DAC 20% 미만      │ 기록 불요                           │\n"
+                "│ DAC 20% ~ 100%   │ 기록 필수 + 크기 측정 후 Table 적용 │\n"
+                "│ DAC 100% 초과     │ 불합격 추정 → 크기 측정·평가 필수  │\n"
+                "└──────────────────┴────────────────────────────────────┘\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ B31.1 vs B31.3 수용 기준 비교\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "┌──────────────────┬──────────────────┬──────────────────────┐\n"
+                "│ 결함 유형         │ B31.1 T.136.4.1  │ B31.3 T.341.3.2      │\n"
+                "├──────────────────┼──────────────────┼──────────────────────┤\n"
+                "│ 균열              │ 전부 불합격       │ 전부 불합격          │\n"
+                "│ IF/IP 구간       │ 300 mm 기준       │ 100 mm 기준 (엄격)   │\n"
+                "│ IF/IP t<19mm     │ 누적 ≤ 25 mm      │ 누적 ≤ t/3 ~ 6 mm   │\n"
+                "│ 기공 개별         │ ≤ 6 mm           │ ≤ 3 mm (엄격)        │\n"
+                "│ 기공 구간 합계    │ 150 mm 내 12 mm  │ 100 mm 내 6 mm (엄격)│\n"
+                "└──────────────────┴──────────────────┴──────────────────────┘\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 진보적 검사 (Progressive Examination, Para. 136.4.2)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "초기 샘플 검사 결과에 따른 추가 검사 범위:\n"
+                "  1차 불합격 → 동일 용접사·절차의 용접부 2개 추가 검사\n"
+                "  2차 불합격 → 해당 용접사·절차의 나머지 전체 용접부 검사\n"
+                "  ※ 완전 합격 시 이후 샘플링 비율 유지",
             "ASME B31.3 PAUT 합부판정 기준 (Table 341.3.2)":
-                "ASME B31.3 PAUT 합부판정 기준 - Table 341.3.2\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n■ Normal Fluid Service 수용 기준\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n[1] 균열 (Cracks) → 전부 불합격\n\n[2] 용합 불량 / 용입 불량 (IF / IP)\n- 길이가 다음을 초과하면 불합격:\n  · t ≤ 6mm  : 2mm\n  · 6mm < t ≤ 19mm : t/3\n  · t > 19mm : 6mm\n  (임의 100mm 구간 내 누적)\n\n[3] 내부 기공·슬래그 (Porosity / Slag)\n- 개별 지시 > 3mm 불합격\n- 임의 100mm 구간 내 합계 > 6mm 불합격\n- 군집 기공: 25cm² 투영 면적 내 > 1cm² 기공 면적 불합격\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n■ Severe Cyclic / Category M 수용 기준\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n- 용합 불량 / 용입 불량: 길이 > 0 (어떠한 지시도 불합격)\n- 기공: 개별 > 1.5mm 불합격\n- 균열: 전부 불합격\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n■ PAUT 진폭 평가 기준\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n- 기준 감도: SDH(Side Drilled Hole) 또는 FBH(Flat Bottom Hole) DAC 설정\n- 기록 수준: DAC 20% (−14dB) 이상 모든 지시 기록\n- 평가 수준: DAC 50% (−6dB) 이상 크기 측정 및 위 기준 적용\n- DAC 100% 초과 지시: 불합격 추정, 반드시 크기 측정·평가",
+                "ASME B31.3 Process Piping - 유체 서비스 분류 및 Table 341.3.2 수용 기준\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ B31.3 유체 서비스 분류 (Fluid Service Categories)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "B31.3는 유체의 위험도에 따라 배관을 5가지 서비스로 분류하고\n"
+                "각각 다른 검사 범위·수용 기준을 적용함.\n\n"
+                "【1】 Normal Fluid Service (일반 유체 서비스) — 기본값\n"
+                "  - 정의: 위험 유체 / 고압 / 극저온이 아닌 일반적인 공정 배관\n"
+                "  - 해당 유체 예시: 냉각수, 저압 스팀, 공기, 일반 화학약품\n"
+                "  - 검사 요건: 용접부의 5% 이상 (Random Examination)\n"
+                "  - 수용 기준: Table 341.3.2 Normal 기준 적용\n"
+                "  - ⚠ B31.3의 가장 기본 등급 — 별도 분류 없으면 여기 해당\n\n"
+                "【2】 Category D Fluid Service (위험도 낮은 유체)\n"
+                "  - 정의: 비가연성·무독성, 설계 압력 ≤ 1035 kPa (150 psi),\n"
+                "    설계 온도 −29°C ~ +186°C 범위\n"
+                "  - 해당 유체 예시: 물, 저압 스팀, 압축공기, 냉매\n"
+                "  - 검사 요건: 육안 검사(VT)만으로 RT/UT 생략 가능\n"
+                "  - 수용 기준: Para. 341.4 (완화 기준)\n\n"
+                "【3】 Category M Fluid Service (극히 위험한 유체)\n"
+                "  - 정의: 미량 누출도 인체에 치명적인 독성 유체\n"
+                "    (TLV ≤ 1 ppm, 또는 이에 준하는 독성)\n"
+                "  - 해당 유체 예시: 염소(Cl₂), 포스겐(COCl₂), HF, 일산화탄소(CO)\n"
+                "  - 검사 요건: 용접부 100% RT 또는 UT\n"
+                "  - 수용 기준: Table 341.3.2 Category M 기준 (Normal보다 엄격)\n\n"
+                "【4】 High Pressure Fluid Service (고압 유체)\n"
+                "  - 정의: 설계 압력이 ASME B16.5 Class 2500 플랜지 허용 압력 초과\n"
+                "  - 적용: B31.3 Chapter IX 별도 적용\n"
+                "  - 검사 요건: 용접부 100% RT 또는 UT (Code Case 2235 권장)\n"
+                "  - 수용 기준: Chapter IX 별도 기준\n\n"
+                "【5】 Severe Cyclic Conditions (심한 사이클 하중)\n"
+                "  - 정의: 응력 범위가 허용 응력의 80% 초과 또는 사이클 횟수 과다\n"
+                "  - 검사 요건: 용접부 100% RT 또는 UT\n"
+                "  - 수용 기준: Table 341.3.2 Severe Cyclic 기준 (가장 엄격)\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ Table 341.3.2 — 수용 기준 비교\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "【Normal Fluid Service 기준】\n"
+                "  [균열] → 전부 불합격\n"
+                "  [IF / IP] 임의 100 mm 구간 내 누적 길이 기준:\n"
+                "    ┌──────────────┬─────────────────┐\n"
+                "    │ 두께 (t)      │ 최대 허용 누적 ℓ │\n"
+                "    ├──────────────┼─────────────────┤\n"
+                "    │ t ≤ 6 mm     │ 2 mm            │\n"
+                "    │ 6 < t ≤ 19 mm│ t/3             │\n"
+                "    │ t > 19 mm    │ 6 mm            │\n"
+                "    └──────────────┴─────────────────┘\n"
+                "  [기공 / 슬래그]\n"
+                "    - 개별 지시 > 3 mm → 불합격\n"
+                "    - 임의 100 mm 내 합계 > 6 mm → 불합격\n"
+                "    - 군집 기공: 25 cm² 내 > 1 cm² → 불합격\n\n"
+                "【Category M / Severe Cyclic 기준 (엄격)】\n"
+                "  [IF / IP] → 길이 > 0 (어떠한 지시도 불합격)\n"
+                "  [기공]    → 개별 > 1.5 mm → 불합격\n"
+                "  [균열]    → 전부 불합격\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 검사 범위 요약\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "┌────────────────────┬───────────────────────┐\n"
+                "│ 서비스 분류         │ 최소 검사 비율         │\n"
+                "├────────────────────┼───────────────────────┤\n"
+                "│ Category D          │ VT만 (RT/UT 불필요)   │\n"
+                "│ Normal              │ 5% Random             │\n"
+                "│ Severe Cyclic       │ 100%                  │\n"
+                "│ Category M          │ 100%                  │\n"
+                "│ High Pressure       │ 100% (Chapter IX)     │\n"
+                "└────────────────────┴───────────────────────┘\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ PAUT 진폭 평가 기준 (DAC)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 기록 수준: DAC 20% (−14 dB)\n"
+                "- 평가 수준: DAC 50% (−6 dB)\n"
+                "- DAC 100% 초과: 불합격 추정, 크기 측정·평가 필수",
             "ASME Sec. VIII Div.1 PAUT 합부판정 기준 (UW-51/App.12)":
                 "ASME Section VIII Div.1 PAUT 합부판정 기준\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n■ UW-51 (전수 RT 대체 PAUT) 수용 기준\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n[1] 무조건 불합격 결함\n- 균열 (Cracks): 크기·위치 무관 전부 불합격\n- 용합 불량 (Incomplete Fusion)\n- 용입 불량 (Incomplete Penetration)\n\n[2] 내부 결함 (기공, 슬래그)\n두께(t)별 최대 허용 개별 지시 길이:\n  · t ≤ 19mm  → 최대 6mm\n  · 19mm < t ≤ 57mm → 최대 t/3\n  · t > 57mm  → 최대 19mm\n\n임의 12t 구간(단, 최대 152mm) 내 지시 길이 합계:\n  → 위 개별 기준치 이내\n\n[3] 언더컷 (Undercut)\n- 표면 언더컷 깊이 > 1mm: 불합격\n- 0.4mm 미만: 허용\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n■ Appendix 12 (UT 대체) 수용 기준\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n- 평면형 결함 (균열, IF, IP): 전부 불합격\n- 체적형 결함 (기공, 슬래그):\n  · 개별 지시 높이 > 25% t 또는 6mm 중 작은 값: 불합격\n  · 지시 길이: UW-51 기준과 동일 적용\n- DAC 기준:\n  · 평가 수준: DAC 50%\n  · 기록 수준: DAC 20%",
             "ASME PAUT 파괴역학 합부판정 (Code Case 2235 / ECA)":
@@ -430,6 +959,180 @@ class NDTProcedureApp:
                 "- 적용 시 재질의 파괴인성(K_IC) 시험값 또는\n"
                 "  Charpy → K_IC 변환식 사용 근거 문서화 필수",
 
+            "Appendix 12 vs Code Case 2235 - 구조·차이·적용 흐름 상세":
+                "ASME Sec. VIII Div.1 — Appendix 12 vs Code Case 2235\n"
+                "RT 대체 UT/PAUT 적용 체계 완전 해설\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 1. 두 기준의 위치와 역할\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "┌─────────────────┬──────────────────────┬──────────────────────┐\n"
+                "│ 구분            │ Appendix 12          │ Code Case 2235       │\n"
+                "├─────────────────┼──────────────────────┼──────────────────────┤\n"
+                "│ 문서 유형       │ Mandatory Appendix   │ Code Case (임시 허용)│\n"
+                "│                 │ (코드 본문 일부)     │ (별도 승인 문서)     │\n"
+                "│ 발행 기관       │ ASME Sec. VIII 위원회│ ASME Standards Comm. │\n"
+                "│ 적용 범위       │ Div.1 전용           │ Div.1 + Div.2 +      │\n"
+                "│                 │                      │ Section I            │\n"
+                "│ 두께 하한       │ t ≥ 1/2\" (13mm)     │ t ≥ 20mm (25mm 실무) │\n"
+                "│ SDH 직경 기준   │ Ø 3/64\" (≈1.2mm)    │ t≤50mm: Ø1.5mm       │\n"
+                "│                 │                      │ t>50mm : Ø2.0mm      │\n"
+                "│ 절차 검증       │ 규정 없음            │ 데모 블록 필수       │\n"
+                "│ 결함 허용 기준  │ 길이 기반 (UW-53)    │ 높이+길이 복합 기준  │\n"
+                "│ 표면 결함 기준  │ 언더컷 기준 준용     │ 50% 감소 적용        │\n"
+                "│ 발주처 승인     │ 필요                 │ 필요 + AI 별도 확인  │\n"
+                "│ 데이터 보존     │ 일반 기록            │ Raw Data 전체 보존   │\n"
+                "└─────────────────┴──────────────────────┴──────────────────────┘\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 2. Appendix 12 상세 구조\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Appendix 12는 Sec. VIII Div.1 코드 본문에 포함된\n"
+                "\"Mandatory\"(강제) 부록으로, UW-53과 연계하여\n"
+                "RT 대체 UT 시 최소 요건을 규정한다.\n\n"
+                "[12-1] Scope (적용 범위)\n"
+                "  - 맞대기 용접부 완전 체적 검사 목적\n"
+                "  - UW-11(a)(4): RT 불가 시 UT 대체 허용 근거 제공\n"
+                "  - UW-53: UT 수용 기준 조항 (Appendix 12와 연동)\n\n"
+                "[12-2] Procedure Requirements (절차서 요건)\n"
+                "  - ASME Section V Article 4 기준 서면 절차서 필수\n"
+                "  - 절차서에 포함해야 할 최소 항목:\n"
+                "    · 장비 유형, 주파수, 프로브 각도\n"
+                "    · 보정 블록 사양 (재질, SDH 직경·깊이)\n"
+                "    · 스캔 방향·범위·인덱스 간격\n"
+                "    · 감도 설정 방법 (DAC 곡선 작성)\n"
+                "    · 기록·평가·거부 수준 dB 값\n"
+                "    · 결함 크기 측정 방법\n"
+                "  - 절차 변경 시 재승인 필요\n\n"
+                "[12-3] Equipment (장비)\n"
+                "  - A-scan 표시 장치 필수 (실시간 파형 확인)\n"
+                "  - PAUT 사용 시: S-scan 표시 및 Focal Law 설계 요건 추가\n"
+                "  - 장비 교정 유효성: 제조사 권고 주기 (연 1회 이상)\n\n"
+                "[12-4] Calibration (보정)\n"
+                "  보정 블록 (Basic Calibration Block):\n"
+                "    - 재질: 검사 대상과 동일 P-Number\n"
+                "    - 기준 반사체: SDH Ø 3/64\" (≈1.19mm)\n"
+                "    - SDH 배치: t/4, t/2, 3t/4 (최소 3점)\n"
+                "  DAC 곡선 작성:\n"
+                "    - 각 깊이 SDH 최대 에코를 연결한 거리-진폭 곡선\n"
+                "    - Search Level = DAC + 6 dB\n"
+                "    - 기록 수준: DAC 20% (−14 dB)\n"
+                "    - 평가 수준: DAC 50% (−6 dB)\n"
+                "    - 거부 수준: DAC 100%\n"
+                "  보정 주기:\n"
+                "    - 검사 시작 전·종료 후 필수\n"
+                "    - 매 2시간마다 (또는 절차서 명시 주기)\n"
+                "    - 장비 이동, 충격, 온도 변화 ±14°C 초과 시\n"
+                "  보정 유효성:\n"
+                "    - ±2 dB 이내 → 계속 유효\n"
+                "    - 2~4 dB 이탈 → 직전 보정 이후 지시 재평가\n"
+                "    - 4 dB 초과 이탈 → 직전 보정 이후 전 용접부 재검사\n\n"
+                "[12-5] Coverage (검사 커버리지)\n"
+                "  - 용접부 전체 단면 체적 100% 필수\n"
+                "  - HAZ 포함 (최소 모재 측 13mm)\n"
+                "  - 최소 2방향 각도 스캔:\n"
+                "    · 루트부 결함 탐지: 45° 또는 60° 빔\n"
+                "    · 측벽 용합 불량 탐지: 45°~60°\n"
+                "    · 종방향 결함 (횡단 균열): 추가 스캔 필요\n"
+                "  - 스캔 커버리지 도해 (Coverage Plan) 문서화\n\n"
+                "[12-6] Acceptance Criteria (수용 기준 - Table UW-53)\n"
+                "  평면형 결함:\n"
+                "    - 균열: 전부 불합격\n"
+                "    - 용합불량 (IF), 용입불량 (IP):\n"
+                "      t < 19mm  → 누적 길이 > 25mm: 불합격\n"
+                "      19≤t<57mm → 누적 길이 > t/3 : 불합격\n"
+                "      t ≥ 57mm  → 누적 길이 > 19mm: 불합격\n"
+                "      (임의 300mm 구간 내 기준)\n"
+                "  체적형 결함:\n"
+                "    - 개별 지시 길이 > 6mm: 불합격\n"
+                "    - 임의 150mm 내 합계 > 12mm: 불합격\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 3. Code Case 2235 상세 구조\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Code Case 2235는 Appendix 12를 기반으로 하되,\n"
+                "결함 허용 기준을 파괴역학(ECA) 방법론으로 강화하고\n"
+                "절차 자격 인정(POD 시험)을 추가한 상위 기준이다.\n\n"
+                "[CC 2235] 적용 조건\n"
+                "  - 발행 코드: Section VIII Div.1, Div.2, Section I\n"
+                "  - 두께 범위: 20mm ≤ t ≤ 250mm\n"
+                "  - 대상 용접부: Full Penetration Butt Weld\n"
+                "  - 재질 P-Number: P1/3/4/5A/5B/6/7/8/9A/9B/10A/10F\n"
+                "  - 표면 조건: 검사 전 연마 Ra ≤ 6.3μm\n"
+                "  - 온도 조건: 15°C ~ 50°C\n\n"
+                "[CC 2235] Procedure Qualification (절차 자격 인정)\n"
+                "  Appendix 12 대비 추가 요건:\n"
+                "  ① 데모 블록 (Demonstration Block) 필수:\n"
+                "     - 실제 검사 두께와 동일 재질·두께로 제작\n"
+                "     - 인공 결함 매입 (SDH, FBH, 노치 등)\n"
+                "     - 블라인드 테스트(Blind Test) 수행\n"
+                "       → 목표 결함 크기 탐지율 POD ≥ 90% 달성 필수\n"
+                "  ② 절차 변경 재자격:\n"
+                "     - 장비 교체, 프로브 변경, 각도 변경, 설정 변경 시\n"
+                "       데모 블록 재시험 필요\n\n"
+                "[CC 2235] SDH 보정 블록 강화 기준\n"
+                "  - Appendix 12의 Ø1.2mm보다 큰 SDH 적용:\n"
+                "    · t ≤ 50mm : SDH Ø 1.5mm (약 25% 증가)\n"
+                "    · t > 50mm : SDH Ø 2.0mm (약 67% 증가)\n"
+                "  → 더 작은 결함까지 탐지·기록 의무화\n\n"
+                "[CC 2235] 보정 주기 강화\n"
+                "  - Appendix 12(2시간)보다 강화:\n"
+                "    · 검사 전·후 필수\n"
+                "    · 매 4시간마다 (일부 절차서: 2시간)\n"
+                "    · 장비 이동·충격 후\n"
+                "    · 온도 차 ±14°C 초과 시\n\n"
+                "[CC 2235] 결함 허용 기준 (Allowable Flaw Size)\n"
+                "  Appendix 12(길이 기반)에서 높이+길이 복합 기준으로 전환:\n\n"
+                "  평면형 결함:\n"
+                "    (1) 결함 높이: a ≤ 0.1t  (단, a ≤ 6mm)\n"
+                "    (2) 결함 길이: ℓ ≤ 6a  (단, ℓ ≤ 50mm)\n"
+                "    (3) 표면 연결 결함: 허용치 × 0.5 (50% 감소)\n"
+                "    (4) 결함 간격 규칙:\n"
+                "        인접 결함 S < max(a₁, a₂) → 단일 결함으로 합산\n\n"
+                "  체적형 결함:\n"
+                "    - Appendix 12 기준 동일 적용\n"
+                "    - 단, 표면 연결 체적 결함: 허용 높이 30% 감소\n\n"
+                "[CC 2235] 스캔 파라미터 강화\n"
+                "  - 인덱스 스캔 간격: ≤ 1.0mm (Appendix 12는 명시 없음)\n"
+                "  - S-scan 각도 스텝: ≤ 2°\n"
+                "  - 빔 중첩(-6dB): 모든 각도에서 확인\n"
+                "  - S/N 비: ≥ 3:1 (9.5dB) 유지\n\n"
+                "[CC 2235] 기록·보고 강화\n"
+                "  - A-scan + S-scan 원시 데이터(Raw Data) 전량 보존\n"
+                "  - 저장 형식: DICONDE 또는 제조사 전용 포맷\n"
+                "  - 결함 목록: 위치(X, Y, 깊이), 높이, 길이, 판정\n"
+                "  - 커버리지 맵(Coverage Map) 첨부\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 4. 적용 흐름도 (Decision Flow)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "RT 적용 가능? ─Yes─→ RT 실시 (UW-51/52)\n"
+                "     │\n"
+                "    No\n"
+                "     ↓\n"
+                "두께 ≥ 13mm? ─No─→ UT 일반 절차 (Art.4)\n"
+                "     │\n"
+                "    Yes\n"
+                "     ↓\n"
+                "Appendix 12 UT/PAUT 절차 작성 + 발주처 승인\n"
+                "     │\n"
+                "     ├─ [기본 적용] → Appendix 12 기준\n"
+                "     │                SDH Ø1.2mm / UW-53 길이 기준\n"
+                "     │\n"
+                "     └─ [강화 적용] → Code Case 2235 추가 채택\n"
+                "                      SDH Ø1.5~2.0mm / 높이+길이 기준\n"
+                "                      데모 블록 POD ≥90% 필수\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 5. 실무 선택 기준\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Appendix 12만 적용 시:\n"
+                "  - 두께 13~20mm 비교적 얇은 용기\n"
+                "  - 결함 허용 기준을 RT 수준(길이 기반)으로 유지\n"
+                "  - 데모 블록 준비 시간·비용 절약 필요 시\n\n"
+                "Code Case 2235 추가 적용 시:\n"
+                "  - 두께 20mm 이상 고두께·고압 용기\n"
+                "  - 발주처/고객이 CC 2235 명시 요구 시\n"
+                "  - RT 완전 대체를 위한 높은 신뢰성 입증 필요 시\n"
+                "  - TOFD 또는 고해상도 PAUT 장비 보유 시\n\n"
+                "⚠ 주의: Code Case는 ASME 위원회 갱신 여부 확인 필수\n"
+                "        (최신 Annex 또는 개정 CC 2235 Rev. 번호 확인)",
+
             "ASME Sec. VIII Div.2 PAUT 합부판정 기준 (Para. 7.5.5)":
                 "ASME Section VIII Div.2 PAUT 합부판정 기준 - Paragraph 7.5.5\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n■ Table 7.5.5-1 수용 기준\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n[1] 평면형 결함 (Planar Defects)\n- 균열, 용합 불량, 용입 불량: 크기 무관 전부 불합격\n\n[2] 체적형 결함 (Volumetric Defects)\n결함 높이(a) 및 길이(ℓ) 기준:\n  · a ≤ 3mm : ℓ ≤ 6mm 허용\n  · 3mm < a ≤ 6mm : ℓ ≤ 2a 허용\n  · a > 6mm : 불합격\n\n표면 결함 (Surface-Breaking):\n  · a ≤ 1.5mm : ℓ ≤ 6mm 허용\n  · a > 1.5mm : 불합격\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n■ PAUT 결함 크기 측정 요건\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n- 결함 높이(a): -6dB drop법 또는 TOFD(Tip Diffraction) 병행\n- 결함 길이(ℓ): -6dB drop법 또는 -20dB 끝점법\n- 위치 정확도: ±1mm 이내\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n■ 보정 블록 기준 (Reference Sensitivity)\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n- 2mm SDH(Side Drilled Hole)을 기준 반사체로 DAC 설정\n- 평가 수준: DAC 50% (-6dB)\n- 기록 수준: DAC 20% (-14dB)\n- 검사 감도: 평가 수준보다 +6dB 추가 증폭하여 검사",
             "RT 표준 항목":
@@ -474,6 +1177,250 @@ class NDTProcedureApp:
                 "ASTM E1476 - Standard Guide for Metals Identification, Grade Verification, and Sorting (PMI XRF 기법)\n\n적용 범위:\nXRF(X선 형광분석)를 이용한 금속 재질 식별·등급 검증 가이드.\n\n주요 요구사항:\n- 장비 종류:\n  · 휴대형 XRF(pXRF): 현장 비파괴 분석 (Ni, Cr, Mo, V, Nb 등 검출)\n  · 벤치탑 XRF: 실험실용, 정밀도 높음\n- 교정: 매 측정 전 NIST 추적 가능 인증 표준 시편으로 교정\n- 측정 조건: 측정 시간, 면적, 표면 상태(스케일 제거 필요) 설정\n- 한계:\n  · 탄소(C), 황(S), 인(P): XRF로 검출 불가 → OES 병행 필요\n  · 도막·산화층: 표면 연마 후 측정\n- 재질 판정: ASTM, ASME, EN 규격 성분 데이터베이스 비교\n- 기록: 측정값, 장비 모델·S/N, 교정 결과, 검사자, 날짜",
             "ASME PCC-2 (PMI - 수리·교체 재질 검증)":
                 "ASME PCC-2 - Repair of Pressure Equipment and Piping (수리·교체 PMI)\n\n적용 범위:\n압력 기기·배관 수리 및 교체 시 재질 검증 요구사항.\n\n주요 요구사항:\n- 적용 시점: 수리 전 기존 모재 확인, 수리 후 교체 재질 최종 검증\n- PMI 필수 대상:\n  · 합금강·고합금 재질 수리 부위\n  · 이종금속 용접 수리\n  · 재질 불명 부품 교체\n- 장비: XRF(주) + OES(탄소 확인 필요 시 보완)\n- 절차:\n  1) 기존 모재 재질 확인\n  2) 수리 재료 입고 검증\n  3) 용접 완료 후 용착금속 및 HAZ 인접 모재 재확인\n- 기록: 수리 전·후 PMI 결과, 장비 정보, 검사자, 판정 포함\n- 불합격 조치: 즉시 작업 중단, 재질 재확인 후 적합 재료로 교체",
+            "ASME Section VIII Div.1 vs Div.2 비교 (설계·재료·적용)":
+                "ASME Section VIII Div.1 vs Div.2 - 설계·재료·적용 종합 비교\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 설계 철학\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "┌──────────────────┬──────────────────┬──────────────────┐\n"
+                "│ 항목             │ Div.1            │ Div.2            │\n"
+                "├──────────────────┼──────────────────┼──────────────────┤\n"
+                "│ 설계 방식        │ Design by Rule   │ Design by Analy- │\n"
+                "│                  │ (규칙 기반)      │ sis (해석 기반)  │\n"
+                "│ 안전계수(UTS)    │ 4.0              │ 3.0              │\n"
+                "│ 허용응력(Sm)     │ UTS / 4          │ UTS / 3          │\n"
+                "│ 피로 해석        │ 불필요           │ 필수 (Screening  │\n"
+                "│                  │                  │  → 상세 해석)    │\n"
+                "│ 응력 분류        │ 없음             │ 1차/2차/피크 필수│\n"
+                "│ 이음 효율 (E)    │ 0.65 ~ 1.0       │ 항상 1.0         │\n"
+                "│ 설계 문서        │ 간략 계산서      │ 상세 설계 보고서 │\n"
+                "│ Code Stamp       │ U Stamp          │ U2 Stamp         │\n"
+                "│ 제작 비용        │ 낮음             │ 높음             │\n"
+                "│ 재료 두께        │ 두꺼운 쉘        │ 더 얇은 쉘 가능  │\n"
+                "└──────────────────┴──────────────────┴──────────────────┘\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 적용 대상\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Div.1 적합:\n"
+                "  - 소형·중압 일반 압력용기\n"
+                "  - 반복 하중 없는 정상운전\n"
+                "  - 설계 기간 단축 필요 시\n"
+                "Div.2 적합:\n"
+                "  - 고압·대형 용기 (두께 절감 효과 > 해석 비용)\n"
+                "  - 반복 하중·사이클 피로 적용 서비스\n"
+                "  - 핵·화학 플랜트 등 고신뢰성 요구\n\n"
+                "실무 판단 기준:\n"
+                "  설계 압력이 높고 쉘 두께가 두꺼울수록\n"
+                "  Div.2 재료 절감 효과가 해석 비용 초과 → Div.2 경제적 우위",
+            "ASME Section VIII Div.1 vs Div.2 비교 (비파괴검사)":
+                "ASME Section VIII Div.1 vs Div.2 - 비파괴검사(NDT) 요건 상세 비교\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 1. NDT 전체 요건 개요\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "┌──────────────────────┬─────────────────────┬─────────────────────┐\n"
+                "│ 항목                 │ Div.1               │ Div.2               │\n"
+                "├──────────────────────┼─────────────────────┼─────────────────────┤\n"
+                "│ 근거 조항            │ Part UW (용접 요건) │ Part 7 (검사 요건)  │\n"
+                "│ RT/UT 적용 범위      │ 조건부 (UW-11 기준) │ 전수 100% 필수      │\n"
+                "│ 이음 효율(E) 연동    │ E=0.65/0.85/1.0 선택│ 항상 E=1.0          │\n"
+                "│ RT 완전 생략 가능    │ E=0.65 적용 시 가능 │ 불가                │\n"
+                "│ PAUT 허용 근거       │ App.12 + CC 2235    │ Para.7.5.5 (명시)   │\n"
+                "│ TOFD 요구            │ 없음                │ 고두께 권고         │\n"
+                "│ MT 근거              │ Mandatory App.6     │ Para.7.5.6          │\n"
+                "│ PT 근거              │ Mandatory App.8     │ Para.7.5.7          │\n"
+                "│ VT 근거              │ UW-38, UG-97        │ Para.7.5.1          │\n"
+                "│ PMI                  │ 계약 조건 의존      │ 고합금 계열 필수    │\n"
+                "│ 검사 계획서 (EP)     │ 불필요              │ 필수 제출           │\n"
+                "│ Level III 승인       │ 권고                │ 절차서 개발·승인 필수│\n"
+                "└──────────────────────┴─────────────────────┴─────────────────────┘\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 2. RT (방사선검사) 상세 비교\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "[Div.1 - UW-51 / UW-52]\n"
+                "  적용 결정 기준 (UW-11):\n"
+                "    - Category A, B 맞대기 용접부 → UW-11(a) 기준으로\n"
+                "      전수(UW-51) 또는 부분(UW-52) 선택\n"
+                "    - 재질 P-No., 두께, 설계 온도·압력 조건으로 결정\n"
+                "  전수 RT (UW-51):\n"
+                "    - 용접부 전체 길이 100% 검사\n"
+                "    - 이음 효율 E=1.0 적용 → 두께 최소화\n"
+                "    - 수용 기준: UW-51(b)\n"
+                "      · 균열, 미융합, 용입불량: 전부 불합격\n"
+                "      · 기공: Table UW-51 면적 기준\n"
+                "      · 슬래그: 길이 ≤ t/3 (최대 6mm ~ 19mm)\n"
+                "  부분 RT (UW-52):\n"
+                "    - 용접부 길이의 일부 (최소 1 spot / 50ft)\n"
+                "    - 이음 효율 E=0.85 적용 → 두께 약 18% 증가\n"
+                "    - 수용 기준: UW-51(b) 동일 (해당 spot 기준)\n"
+                "    - 불합격 spot 발생 시 → 전수 RT로 확대\n"
+                "  RT 생략 (E=0.65):\n"
+                "    - 검사 전혀 없음 → 두께 약 54% 증가로 보완\n"
+                "    - 저압 비중요 용기에 한정 적용\n\n"
+                "[Div.2 - Para.7.5.3]\n"
+                "  - 모든 맞대기 용접부 (Category A, B): 전수 RT 또는 UT\n"
+                "  - E=1.0으로 설계 → 검사 생략 시 설계 자체 무효화\n"
+                "  - 100% UT(PAUT 포함)로 RT 대체 가능 (Para.7.5.5)\n"
+                "  수용 기준 (Table 7.5.3-1):\n"
+                "    · 균열, 미융합, 용입불량: 크기 무관 전부 불합격\n"
+                "    · 기공: 최대 직경 3mm, 면적 기준 강화\n"
+                "    · 슬래그/개재물: 길이 ≤ min(t/3, 6mm)\n"
+                "    · 표면 언더컷: 깊이 ≤ 0.8mm\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 3. UT / PAUT 상세 비교\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "[Div.1 - Appendix 12 + Code Case 2235]\n"
+                "  허용 조건:\n"
+                "    - App.12 요건 충족 + 발주처 승인 시 RT 대체\n"
+                "    - Code Case 2235: PAUT로 RT 완전 대체 허용\n"
+                "      (두께 25mm 이상 맞대기 용접부 대상)\n"
+                "  절차서 기준:\n"
+                "    - ASME Section V Article 4\n"
+                "    - App.XII (PAUT 전용 요건)\n"
+                "  보정 블록:\n"
+                "    - ASME Basic Calibration Block\n"
+                "    - SDH 직경: Art.4 Table T-434.2.1 기준\n"
+                "    - IIW Block: 굴절각·음속 확인용\n"
+                "  감도 설정:\n"
+                "    - DAC 곡선 작성 (기준 SDH → 각 깊이별 DAC점)\n"
+                "    - Search Level: DAC +6dB\n"
+                "    - 기록: DAC 20% / 평가: DAC 50% / 거부: DAC 100%\n"
+                "  수용 기준:\n"
+                "    - UW-51(b) 준용 또는 CC 2235 별도 기준 적용\n"
+                "    - 결함 높이 측정: 선택적 (−6dB 또는 −20dB법)\n\n"
+                "[Div.2 - Para.7.5.5 (UT / PAUT)]\n"
+                "  허용 조건:\n"
+                "    - Para.7.5.5에서 PAUT 명시적 허용\n"
+                "    - 모든 맞대기 용접부 RT 대체 가능\n"
+                "  절차서 기준:\n"
+                "    - ASME Section V Article 4 + App.XII\n"
+                "    - 상세 Scan Plan 첨부 필수\n"
+                "  보정 블록:\n"
+                "    - 검사 모재와 동일 재질·두께\n"
+                "    - SDH 직경: Table T-434.2.1 + Para.7.5.5 요건 병행\n"
+                "  감도 설정:\n"
+                "    - TCG (Time Corrected Gain) 또는 DAC 적용 가능\n"
+                "    - 전 깊이 범위에서 균일한 SDH 감도 유지\n"
+                "  결함 크기 측정 (필수):\n"
+                "    - 길이: −6dB 강하법 또는 −20dB 끝점법\n"
+                "    - 높이: −6dB 강하법 (TOFD 병행 권고)\n"
+                "    - 결함 치수 측정 결과를 Table 7.5.5-1에 대입\n"
+                "  수용 기준 (Table 7.5.5-1):\n"
+                "    평면형 결함 (균열, 미융합, 용입불량):\n"
+                "      → 크기 무관 전부 불합격\n"
+                "    체적형 결함 (기공, 슬래그):\n"
+                "      · 결함 높이 a ≤ 3mm : 길이 ℓ ≤ 6mm 허용\n"
+                "      · 3mm < a ≤ 6mm    : 길이 ℓ ≤ 2a 허용\n"
+                "      · a > 6mm          : 불합격\n"
+                "    표면 연결 결함:\n"
+                "      · a ≤ 1.5mm : 길이 ℓ ≤ 6mm 허용\n"
+                "      · a > 1.5mm : 불합격\n"
+                "  디지털 데이터 보존:\n"
+                "    - A-scan, S-scan, B-scan 전체 파일 보존 필수\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 4. MT (자분탐상검사) 상세 비교\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "[Div.1 - Mandatory Appendix 6]\n"
+                "  적용 대상:\n"
+                "    - 용접 완료 후 표면·표면 직하 결함 탐지\n"
+                "    - PWHT(용접 후 열처리) 완료 후 재검사\n"
+                "  검사 면적:\n"
+                "    - 용접부 + 양쪽 HAZ 각 13mm (1/2인치) 포함\n"
+                "  자화 방법:\n"
+                "    - 요크(AC 권장): 표면 결함 감도 우수\n"
+                "    - 코일법, 헤드샷: 원통형 부재 적용\n"
+                "    - 최소 2방향 자화 필수 (직교 방향 결함 탐지)\n"
+                "  자분 종류:\n"
+                "    - 형광 습식 자분 (Fluorescent Wet): 감도 최우수\n"
+                "    - 건식 자분 (Dry Powder): 고온 부위 허용\n"
+                "  조도:\n"
+                "    - 형광 자분: 자외선 UV-A 최소 1000 μW/cm²\n"
+                "    - 가시광선 자분: 최소 100 fc (1076 lux)\n"
+                "  수용 기준 (App.6, Para. 6-5):\n"
+                "    - 선형 지시: 1.6mm 초과 불합격\n"
+                "    - 원형 지시: 4.8mm 초과 불합격\n"
+                "    - 지시 군집: 150mm² 이내 4개 이상 군집 불합격\n\n"
+                "[Div.2 - Para.7.5.6]\n"
+                "  적용 시점 추가:\n"
+                "    - 피로 해석 대상 용접부: 최종 형상 가공 완료 후\n"
+                "    - 고사이클 피로 부위: 모든 표면 처리 후 추가 MT\n"
+                "  수용 기준 (Table 7.5.6-1):\n"
+                "    - 선형 지시: 1.6mm 초과 불합격 (동일)\n"
+                "    - 원형 지시: 4.8mm 초과 불합격 (동일)\n"
+                "    - 표면 결함 높이 기준 병행 적용:\n"
+                "      · 피로 해석 부위 → 높이 a ≤ 1.5mm 추가 요건\n"
+                "  추가 요건:\n"
+                "    - 압력 시험 후 접근 가능한 용접부 MT 재검사\n"
+                "    - 검사 결과 디지털 기록 및 보존 의무\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 5. PT (침투탐상검사) 상세 비교\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "[Div.1 - Mandatory Appendix 8]\n"
+                "  적용 대상:\n"
+                "    - 비자성 재질 (오스테나이트 스테인리스, 알루미늄 등)\n"
+                "    - MT 적용 불가 부위의 표면·개구 결함 탐지\n"
+                "  PT 방법:\n"
+                "    - Method A: 수세성 침투제\n"
+                "    - Method C: 용제 제거성 (현장 적용 용이)\n"
+                "    - Method D: 후유화성 (고감도 요구 시)\n"
+                "  Type 선택:\n"
+                "    - Type 1: 형광 PT (감도 우수, 암실 필요)\n"
+                "    - Type 2: 가시광선 PT (현장 편의성)\n"
+                "  침투 시간: 최소 5분 (재질·온도 따라 최대 60분)\n"
+                "  현상 시간: 최소 10분 이상\n"
+                "  수용 기준 (App.8, Para. 8-4):\n"
+                "    - 선형 지시: 1.6mm 초과 불합격\n"
+                "    - 원형 지시: 4.8mm 초과 불합격\n"
+                "    - 지시 열배열: 150mm 내 4개 이상 불합격\n\n"
+                "[Div.2 - Para.7.5.7]\n"
+                "  추가 요건:\n"
+                "    - 형광 PT (Type 1) 권장 (가시광선 PT는 동등 감도 입증 필요)\n"
+                "    - 침투 시간: 재질별 최소 시간 표 준수\n"
+                "    - 피로 해석 부위: 표면 거칠기 Ra ≤ 6.3μm 확보 후 검사\n"
+                "  수용 기준 (Table 7.5.7-1):\n"
+                "    - 선형·원형 지시 기준: Div.1과 동일\n"
+                "    - 피로 해석 대상 부위 표면 결함:\n"
+                "      · 균열성 선형 지시: 모두 불합격\n"
+                "      · 깊이 a > 1.5mm 추정 지시: 불합격\n"
+                "  추가:\n"
+                "    - 압력 시험 후 PT 재검사 (접근 가능 용접부)\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 6. VT (육안검사) 비교\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "[Div.1 - UW-38, UG-97]\n"
+                "  - 용접 중간 패스 육안 검사 (UW-38)\n"
+                "  - 최종 수압 시험 중 육안 검사 (UG-99/UG-100)\n"
+                "  - 검사거리: 600mm 이내, 조도 최소 50 fc\n"
+                "[Div.2 - Para.7.5.1]\n"
+                "  - 동일 + 용접 비드 형상, 표면 결함 상세 기준 추가\n"
+                "  - 용접 완료 후 100% VT 의무 (중간 패스 포함)\n"
+                "  - 최종 압력 시험 중 전체 외면 VT\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 7. 검사원 자격 상세 비교\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "┌──────────────────┬──────────────────────┬──────────────────────┐\n"
+                "│ 항목             │ Div.1                │ Div.2                │\n"
+                "├──────────────────┼──────────────────────┼──────────────────────┤\n"
+                "│ 최소 자격        │ SNT-TC-1A Level II   │ SNT-TC-1A Level II   │\n"
+                "│ 합부판정 권한    │ Level II / III       │ Level II / III       │\n"
+                "│ 절차서 개발·승인 │ 권고                 │ Level III 필수       │\n"
+                "│ 검사 계획서(EP)  │ 불필요               │ 필수 제출 및 승인    │\n"
+                "│ PAUT 전용 훈련   │ 기록 권고            │ 별도 기록 의무       │\n"
+                "│ AI 최종 확인     │ 필수                 │ 필수                 │\n"
+                "│ 자격 갱신        │ 사내 프로그램        │ 사내 프로그램        │\n"
+                "└──────────────────┴──────────────────────┴──────────────────────┘\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 8. 검사 기록 및 문서 요건 비교\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "[Div.1]\n"
+                "  - RT 필름: 최소 3년 보존\n"
+                "  - 검사 보고서: 장비, 검사원, 판정 결과 포함\n"
+                "  - 디지털 RT: 동등 품질 입증 시 허용\n"
+                "[Div.2]\n"
+                "  - UT/PAUT 디지털 데이터: 전체 A-scan/S-scan 보존\n"
+                "  - 검사 보고서: 결함 위치·크기·판정 포함 상세 작성\n"
+                "  - Examination Program(EP): 검사 전 제출·승인\n"
+                "  - 검사 완료 보고서: AI 서명 + Level III 확인\n"
+                "  - 데이터 보존 기간: 기기 수명 기간 (최소 10년 이상)",
             "기타": "사용자 정의 텍스트를 입력하세요.",
 
             # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -575,6 +1522,195 @@ class NDTProcedureApp:
                 "ISO 15011-4 - Material identification and verification methods (합금 재질 식별)\n\n적용 범위:\n합금 금속 재질 식별 및 검증을 위한 국제 가이드라인.\n\n주요 내용:\n- 재질 식별 방법 분류:\n  · XRF (X-ray Fluorescence): 비파괴, 현장 신속 분석\n  · OES (Optical Emission Spectrometry): 파괴적, 탄소 검출 가능\n  · LIBS (Laser-Induced Breakdown Spectroscopy): 비파괴, 소형화 가능\n- 분석 원소 범위:\n  · XRF: Mg ~ U (Z=12~92), 탄소·질소·산소 검출 불가\n  · OES: C, Si, Mn, P, S, Cr, Ni, Mo 등 전원소 분석 가능\n- 교정 요건: NIST/PTB 추적 인증 표준 시편 사용\n- 측정 불확도: 주요 합금 원소 ±0.05wt% 이내 권장\n- 재질 판정: ASTM, EN, JIS, KS 규격 성분 범위와 비교\n- 기록: 측정값, 장비 정보, 교정 기록, 검사자, 날짜 포함",
             "ISO 9712 (NDT 검사원 자격 인증)":
                 "ISO 9712:2021 - Non-destructive testing - Qualification and certification of NDT personnel\n\n적용 범위:\n비파괴검사(NDT) 전 종목 검사원 자격 부여 및 인증 국제표준.\n적용 종목: PT, MT, RT, UT(PAUT 포함), ET(와전류), VT, ST, LT 등\n\n자격 레벨:\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n■ Level 1\n- 지정된 NDT 지시서에 따라 검사 수행\n- 검사 결과 기록 (합부판정 권한 없음)\n- 자격 요건: 산업 교육 + 현장 경험 + 필기·실기 시험\n\n■ Level 2 (현장 주력 자격)\n- 검사 절차 설정 및 수행\n- 합부판정 (해당 코드 기준 적용)\n- Level 1 지도·감독\n- 자격 요건: Level 1 경험 + 교육 시간 + 시험 합격\n\n■ Level 3\n- NDT 절차·기술 개발 및 승인\n- 합부판정 기준 해석\n- Level 1/2 자격 시험 감독 및 인증\n- 자격 요건: 학력 + 광범위한 실무 경험 + 종합 시험\n\n인증 유효기간: 5년 (중간 재확인 + 갱신 시험)\n인증 기관: 각국 ISO 9712 인정 인증 기관 (한국: KSNT 등)",
+
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # PAUT 보정 블록 (Calibration Block)
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            "PAUT 보정 블록 종류 및 재질 요건":
+                "PAUT Calibration Block - 종류 및 재질 요건\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 보정 블록 종류\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "┌─────────────┬──────────────┬────────────────────────┐\n"
+                "│ 블록         │ 규격          │ 특징                    │\n"
+                "├─────────────┼──────────────┼────────────────────────┤\n"
+                "│ IIW Block   │ ISO 2400     │ 범용, UT/PAUT 공통      │\n"
+                "│ ASME Basic  │ Sec.V Art.4  │ 미국 코드 기본          │\n"
+                "│ SDH Block   │ 프로젝트 제작 │ PAUT 주력 기준 반사체   │\n"
+                "│ 사용자 제작  │ 동일재질 제작 │ 현장 맞춤형            │\n"
+                "└─────────────┴──────────────┴────────────────────────┘\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 재질 요건\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 검사 대상과 동일 재질 (또는 음향 임피던스 동등 재질)\n"
+                "- 표면 상태: 검사면과 동등 이상의 표면 거칠기\n"
+                "- 열처리 이력: 검사 대상과 동일하게 적용 권장\n"
+                "- 온도 보정: 보정 블록과 검사체 온도 차 ±14°C 초과 시 재보정",
+
+            "PAUT 보정 블록 - SDH 직경 기준 (코드별 비교)":
+                "PAUT Calibration Block - SDH 직경 기준 코드별 비교\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ ASME Section V, Article 4 — Table T-434.2.1 (기본 기준)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "┌─────────────────────┬────────────────────┐\n"
+                "│ 검사 두께 (t)        │ SDH 직경            │\n"
+                "├─────────────────────┼────────────────────┤\n"
+                "│ t ≤ 1\"  (25mm)      │ Ø 3/32\" (≈ 2.4mm) │\n"
+                "│ 1\" < t ≤ 2\" (50mm) │ Ø 1/8\"  (≈ 3.2mm) │\n"
+                "│ 2\" < t ≤ 4\" (100mm)│ Ø 3/16\" (≈ 4.8mm) │\n"
+                "│ t > 4\"  (100mm↑)   │ Ø 1/4\"  (≈ 6.4mm) │\n"
+                "└─────────────────────┴────────────────────┘\n"
+                "※ B31.1, B31.3 일반 적용 시 이 기준 사용\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ ASME Section VIII Div.1, Appendix 12\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 기준 반사체: Ø 3/64\" (≈ 1.2mm) SDH\n"
+                "- 배치 깊이: t/4, t/2, 3t/4\n"
+                "- 근거 조항: App. 12, Para. 12-4\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ ASME Section VIII Div.2, Para. 7.5.5\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 기준 반사체: Ø 2.0mm SDH\n"
+                "- 배치 깊이: t/4, t/2, 3t/4\n"
+                "- 감도 기준: SDH 에코 = 80% FSH (Full Screen Height)\n"
+                "- 근거 조항: Table 7.5.5-1\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ ASME Code Case 2235 (RT 대체 강화 기준)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- t ≤ 50mm → Ø 1.5mm SDH\n"
+                "- t > 50mm → Ø 2.0mm SDH\n"
+                "- Art.4 기본값보다 더 작은 결함 탐지를 위한 강화 기준\n"
+                "- 적용 여부: 프로젝트 계약 사양서(PO/Spec) 확인 필수\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ ISO 13588 (국제 표준)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- SDH 직경: t/40 (최소 1mm)\n"
+                "- 검사 레벨 A/B/C에 따라 감도 차등 적용\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 적용 코드 선택 기준\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "일반 산업 배관·압력용기\n"
+                "  └─ Art.4 Table T-434.2.1 SDH 기준 적용\n\n"
+                "RT 완전 대체 (고신뢰도 요구)\n"
+                "  └─ Code Case 2235 강화 기준 (1.5/2.0mm)\n\n"
+                "원자력 (ASME Sec. XI)\n"
+                "  └─ Appendix VIII PDI 실증 별도 요구",
+
+            "PAUT 보정 절차 - DAC 감도 설정 및 보정 주기":
+                "PAUT Calibration Procedure - DAC 감도 설정 및 보정 주기\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ DAC (Distance Amplitude Correction) 설정 절차\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "① 각 SDH에서 최대 에코 확보\n"
+                "② 각 깊이별 최대 진폭 포인트 연결 → DAC 곡선 작성\n"
+                "③ TCG (Time Corrected Gain) 적용 시:\n"
+                "   모든 깊이에서 SDH 에코를 동일 높이(%)로 보정\n"
+                "④ 감도 기준 설정:\n"
+                "   ├─ 기록 수준: DAC 20% (−14 dB)\n"
+                "   ├─ 평가 수준: DAC 50% (−6 dB)\n"
+                "   └─ 거부 수준: DAC 100% 초과\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 보정 주기\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "┌───────────────────┬──────────────────────────┐\n"
+                "│ 시점               │ 내용                      │\n"
+                "├───────────────────┼──────────────────────────┤\n"
+                "│ 검사 시작 전       │ 전체 보정 수행            │\n"
+                "│ 매 4시간마다       │ 감도 확인 (CC 2235 기준)  │\n"
+                "│ 매 8시간마다       │ ASME Art.4 기본 기준      │\n"
+                "│ 검사 종료 후       │ 최종 보정 확인            │\n"
+                "│ 장비 이동 시       │ 재보정                    │\n"
+                "│ 온도 차 ±14°C 초과│ 온도 보정 실시            │\n"
+                "└───────────────────┴──────────────────────────┘\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 보정 유효성 확인 (Calibration Check)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 감도 변화 ±2 dB 이내         → 유효, 계속 검사\n"
+                "- 감도 변화 ±2 dB 초과 ~ ±4 dB → 직전 보정 후 검사 부위 재검토\n"
+                "- 감도 변화 ±4 dB 초과          → 직전 유효 보정 후 전체 재검사\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ S/N 비 요건\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "- 신호 대 잡음비: ≥ 3:1 (9.5 dB) 유지 필수\n"
+                "- 이 이하면 프로브·각도·감도 재조정 후 재보정",
+
+            "PAUT 결함 탐지 · 위치 · 크기 측정 기준":
+                "PAUT - 결함 탐지, 위치 확인, 크기 측정 기준\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 1. 결함 탐지 (Detection)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "탐지 기준 진폭:\n"
+                "┌──────────────────┬────────────────────────────────┐\n"
+                "│ 진폭 수준         │ 조치                            │\n"
+                "├──────────────────┼────────────────────────────────┤\n"
+                "│ DAC 20% 미만      │ 기록 불요 (무시)                │\n"
+                "│ DAC 20% 이상      │ 기록 필수 (기록 수준)           │\n"
+                "│ DAC 50% 이상      │ 크기 측정 및 평가 수준          │\n"
+                "│ DAC 100% 초과     │ 불합격 추정, 크기 측정 필수     │\n"
+                "└──────────────────┴────────────────────────────────┘\n"
+                "※ 검사 감도: 평가 수준(DAC 50%)보다 +6 dB 추가 증폭 후 스캔\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 2. 결함 위치 확인 (Location)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "① 위치 좌표 기록 항목:\n"
+                "   - 스캔 축(Scan Axis): 용접선 기준 거리 (mm)\n"
+                "   - 인덱스 축(Index Axis): 탐촉자 이동 방향 거리 (mm)\n"
+                "   - 깊이(Depth): 검사면 기준 결함 상단·하단 깊이 (mm)\n\n"
+                "② 위치 정확도 요건:\n"
+                "   - 인덱스 포인트 정확도: ±1 mm 이내 (ISO 13588 / ASME Art.4)\n"
+                "   - 깊이 정확도: ±1 mm 이내\n\n"
+                "③ S-scan / Linear scan 활용:\n"
+                "   - S-scan: 결함 경사 및 방향 확인에 유리\n"
+                "   - Linear scan: 정확한 스캔 축 위치 확인에 유리\n"
+                "   - B-scan / D-scan 복합 활용으로 3차원 위치 파악\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 3. 결함 크기 측정 (Sizing)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "【방법 1】 −6 dB 강하법 (Half Maximum Amplitude Method)\n"
+                "- 최대 에코 진폭의 50% (−6 dB) 지점을 결함 끝단으로 정의\n"
+                "- 결함 길이(ℓ) 및 높이(a) 측정에 모두 사용\n"
+                "- 가장 널리 사용되는 표준 방법\n"
+                "- 적용 기준: ASME Art.4, B31.1, B31.3, ISO 19285\n\n"
+                "【방법 2】 −20 dB 강하법 (Endpoint Method)\n"
+                "- 최대 에코 진폭의 10% (−20 dB) 지점을 결함 끝단으로 정의\n"
+                "- 결함 길이 측정에 주로 사용\n"
+                "- −6 dB법보다 더 보수적인(큰) 크기 산출\n\n"
+                "【방법 3】 TOFD (Time of Flight Diffraction)\n"
+                "- 결함 선단 회절파 도달 시간차로 높이(a) 측정\n"
+                "- 결함 높이 정확도: ±0.5~1 mm (최고 정밀도)\n"
+                "- 표면 근접 결함 탐지 취약 (Lateral wave 간섭)\n"
+                "- Code Case 2235, Sec. VIII Div.2 적용 시 TOFD 병행 권장\n\n"
+                "【방법 비교표】\n"
+                "┌──────────────┬──────────────┬────────────┬────────────────┐\n"
+                "│ 방법          │ 측정 항목     │ 정확도     │ 주 사용 코드   │\n"
+                "├──────────────┼──────────────┼────────────┼────────────────┤\n"
+                "│ −6 dB 강하법 │ 길이, 높이    │ ±1~2 mm    │ ASME, ISO 범용 │\n"
+                "│ −20 dB 강하법│ 길이          │ ±2~3 mm    │ 보수적 평가    │\n"
+                "│ TOFD          │ 높이 (우선)   │ ±0.5~1 mm  │ CC2235, Div.2  │\n"
+                "└──────────────┴──────────────┴────────────┴────────────────┘\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 4. 결함 분류 (Classification)\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "평면형 결함 (Planar) — 가장 위험\n"
+                "  · 균열 (Crack), 용합 불량 (Lack of Fusion), 용입 불량 (Lack of Penetration)\n"
+                "  · 모든 코드에서 크기 무관 불합격 처리\n\n"
+                "체적형 결함 (Volumetric) — 크기 기준 평가\n"
+                "  · 기공 (Porosity), 슬래그 개재물 (Slag), 텅스텐 개재물 (Tungsten)\n"
+                "  · 개별 크기 및 누적 길이 기준 적용\n\n"
+                "표면 연결 결함 (Surface-Breaking)\n"
+                "  · 표면 균열, 루트 불용합 등\n"
+                "  · 내부 결함보다 강화된 기준 적용\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "■ 5. 기록 요건\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "기록 필수 항목:\n"
+                "  - A-scan 파형 + S-scan/B-scan 데이터\n"
+                "  - 결함 위치 (스캔 축, 인덱스 축, 깊이)\n"
+                "  - 결함 크기 (길이 ℓ, 높이 a)\n"
+                "  - 최대 에코 진폭 (%DAC 또는 dB)\n"
+                "  - 사용된 크기 측정 방법\n"
+                "  - 합부 판정 결과 및 근거 조항",
+
             "기타": "사용자 정의 텍스트를 입력하세요."
         }
         
@@ -590,6 +1726,18 @@ class NDTProcedureApp:
         tk.Button(top_frame, text="💾  Word 문서 생성 / 저장", command=self.generate_document,
                   bg="#2196F3", fg="white", padx=15, pady=5,
                   font=("Arial", 10, "bold"), relief=tk.RAISED).pack(side=tk.LEFT, padx=15, pady=6)
+        tk.Button(top_frame, text="📄 초안 저장", command=self.save_draft,
+                  bg="#607d8b", fg="white", padx=10, pady=5,
+                  font=("Arial", 9)).pack(side=tk.LEFT, padx=3, pady=6)
+        tk.Button(top_frame, text="📂 초안 불러오기", command=self.load_draft,
+                  bg="#607d8b", fg="white", padx=10, pady=5,
+                  font=("Arial", 9)).pack(side=tk.LEFT, padx=3, pady=6)
+        self._redo_btn = tk.Button(top_frame, text="↪ 다시실행", command=self.redo,
+                  bg="#f5f5f5", padx=10, pady=5, font=("Arial", 9), state=tk.DISABLED)
+        self._redo_btn.pack(side=tk.RIGHT, padx=3, pady=6)
+        self._undo_btn = tk.Button(top_frame, text="↩ 실행취소", command=self.undo,
+                  bg="#f5f5f5", padx=10, pady=5, font=("Arial", 9), state=tk.DISABLED)
+        self._undo_btn.pack(side=tk.RIGHT, padx=3, pady=6)
         
         # 하단 버튼 영역
         button_frame = tk.Frame(root)
@@ -598,7 +1746,11 @@ class NDTProcedureApp:
         tk.Button(button_frame, text="Word 파일 로드", command=self.load_document, bg="lightblue", padx=10, pady=5).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="사진 추가", command=self.add_images, bg="lightgreen", padx=10, pady=5).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="표준 추가", command=self.add_standard, bg="orange", padx=10, pady=5).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="✏ 텍스트 추가", command=self.add_text_item, bg="#e8f5e9", padx=10, pady=5).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="텍스트 편집", command=self.edit_selected_text, bg="#d6eaff", padx=10, pady=5).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="↑ 위로", command=self.move_item_up, bg="#f5f5f5", padx=8, pady=5).pack(side=tk.LEFT, padx=2)
+        tk.Button(button_frame, text="↓ 아래로", command=self.move_item_down, bg="#f5f5f5", padx=8, pady=5).pack(side=tk.LEFT, padx=2)
+        tk.Button(button_frame, text="📋 복사", command=self.duplicate_selected_item, bg="#fff9c4", padx=8, pady=5).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="선택 삭제", command=self.delete_selected_item, bg="#ffb3b3", padx=10, pady=5).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="전체 초기화", command=self.clear_all, bg="lightcoral", padx=10, pady=5).pack(side=tk.LEFT, padx=5)
         
@@ -615,6 +1767,16 @@ class NDTProcedureApp:
         right_frame = tk.Frame(main_frame)
         right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=(5, 0))
         
+        # 트리뷰 검색창
+        search_row = tk.Frame(left_frame)
+        search_row.pack(fill=tk.X, pady=(0, 3))
+        tk.Label(search_row, text="🔍", font=("Arial", 10)).pack(side=tk.LEFT, padx=(0, 3))
+        self._tree_filter_var.trace_add('write', lambda *_: self._apply_tree_filter())
+        ttk.Entry(search_row, textvariable=self._tree_filter_var,
+                  font=("Arial", 9)).pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(search_row, text="✕", width=3,
+                   command=lambda: self._tree_filter_var.set('')).pack(side=tk.LEFT, padx=2)
+
         # 트리뷰
         tree_frame = tk.Frame(left_frame)
         tree_frame.pack(fill=tk.BOTH, expand=True)
@@ -637,6 +1799,11 @@ class NDTProcedureApp:
         self.tree.bind('<Double-1>', self.on_tree_double_click)
         self.tree.bind('<Button-1>', self.on_tree_click)
         self.tree.bind('<Button-3>', self.on_tree_right_click)  # 우클릭 바인드
+        self.tree.bind('<Alt-Up>', lambda e: self.move_item_up())
+        self.tree.bind('<Alt-Down>', lambda e: self.move_item_down())
+        self.tree.bind('<Delete>', lambda e: self.delete_selected_item())
+        self.tree.bind('<F2>', lambda e: self.edit_selected_text())
+        self.tree.bind('<Return>', lambda e: self.edit_selected_text())
         
         # 우측 내용 및 이미지 영역
         info_label = tk.Label(right_frame, text="로드된 문서 내용", font=("Arial", 11, "bold"))
@@ -684,7 +1851,18 @@ class NDTProcedureApp:
             self.tree.selection_set(item)
             self.tree.focus(item)
 
-        self.edit_selected_text(item)
+        values = self.tree.item(item, 'values')
+        if not values:
+            return
+        content_index = int(item)
+        if values[0] == 'image':
+            if 0 <= content_index < len(self.content):
+                self.replace_image_dialog(content_index)
+        elif values[0] == 'table':
+            if 0 <= content_index < len(self.content):
+                self.view_table_dialog(content_index)
+        else:
+            self.edit_selected_text(item)
 
     def on_tree_click(self, event):
         item = self.tree.identify_row(event.y)
@@ -702,17 +1880,7 @@ class NDTProcedureApp:
         except Exception:
             pass
 
-        values = self.tree.item(item, 'values')
-        if not values:
-            return
-        if values[0] == 'image':
-            content_index = int(item)
-            if 0 <= content_index < len(self.content):
-                self.replace_image_dialog(content_index)
-        elif values[0] == 'table':
-            content_index = int(item)
-            if 0 <= content_index < len(self.content):
-                self.view_table_dialog(content_index)
+        # 단일 클릭은 선택·하이라이트만 수행 (편집/교체는 더블클릭)
 
     def _highlight_content_text_item(self, idx):
         """트리 선택 항목을 content_text에서 하이라이트 및 스크롤"""
@@ -783,39 +1951,57 @@ class NDTProcedureApp:
             self.edit_text_dialog(content_index, current_text)
     
     def edit_text_dialog(self, index, current_text):
+        STYLES = ['Normal', 'Heading 1', 'Heading 2', 'Heading 3',
+                  'Heading 4', 'List Bullet', 'List Number', 'Body Text']
         dialog = tk.Toplevel(self.root)
         dialog.title("텍스트 편집")
-        dialog.geometry("600x400")
-        
+        dialog.geometry("680x480")
+        dialog.bind('<Control-Return>', lambda e: save_text())
+        dialog.bind('<Escape>', lambda e: dialog.destroy())
+
         def save_text():
+            self._push_undo()
             new_text = text_area.get("1.0", tk.END).rstrip("\n")
+            new_style = style_var.get()
             if 0 <= index < len(self.content) and self.content[index].get('type') == 'text':
                 self.content[index]['text'] = new_text
+                self.content[index]['style'] = new_style
                 self.refresh_content()
-                # 트리뷰 선택 복원
                 iid = str(index)
                 if self.tree.exists(iid):
                     self.tree.selection_set(iid)
                     self.tree.focus(iid)
                     self.tree.see(iid)
-                # 오른쪽 요약에서 수정된 항목 하이라이트 & 스크롤
                 self._highlight_content_text_item(index)
                 dialog.destroy()
-        
+
         # 상단 툴바 (저장 버튼)
         toolbar = tk.Frame(dialog, bg="#e8f4fd", relief=tk.RIDGE, bd=1)
-        toolbar.pack(fill=tk.X, padx=0, pady=(0, 5))
-        
-        tk.Button(toolbar, text="💾  저장", command=save_text,
+        toolbar.pack(fill=tk.X, padx=0, pady=(0, 3))
+
+        tk.Button(toolbar, text="💾  저장 (Ctrl+Enter)", command=save_text,
                   bg="#2196F3", fg="white", padx=15, pady=4,
                   font=("Arial", 10, "bold"), relief=tk.RAISED).pack(side=tk.LEFT, padx=10, pady=5)
-        tk.Button(toolbar, text="✕  닫기", command=dialog.destroy,
+        tk.Button(toolbar, text="✕  닫기 (Esc)", command=dialog.destroy,
                   bg="#f44336", fg="white", padx=12, pady=4,
                   font=("Arial", 10), relief=tk.RAISED).pack(side=tk.LEFT, padx=5, pady=5)
         tk.Label(toolbar, text=f"항목 #{index + 1} 편집 중",
-                 font=("Arial", 9), bg="#e8f4fd", fg="#555").pack(side=tk.LEFT, padx=15)
-        
-        text_area = tk.Text(dialog, wrap=tk.WORD)
+                 font=("Arial", 9), bg="#e8f4fd", fg="#555").pack(side=tk.LEFT, padx=10)
+
+        # 스타일 선택 행
+        style_row = tk.Frame(dialog)
+        style_row.pack(fill=tk.X, padx=10, pady=(0, 4))
+        tk.Label(style_row, text="단락 스타일:", font=("Arial", 9)).pack(side=tk.LEFT, padx=(0, 5))
+        current_style = self.content[index].get('style', 'Normal') if 0 <= index < len(self.content) else 'Normal'
+        if current_style not in STYLES:
+            STYLES.append(current_style)
+        style_var = tk.StringVar(value=current_style)
+        ttk.Combobox(style_row, textvariable=style_var, values=STYLES,
+                     state='readonly', width=18, font=("Arial", 9)).pack(side=tk.LEFT)
+        tk.Label(style_row, text="  ※ Word 저장 시 해당 스타일로 적용됩니다",
+                 font=("Arial", 8), fg="#888").pack(side=tk.LEFT, padx=8)
+
+        text_area = tk.Text(dialog, wrap=tk.WORD, font=("Malgun Gothic", 10))
         text_area.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
         text_area.insert(tk.END, current_text)
         text_area.focus_set()
@@ -825,10 +2011,12 @@ class NDTProcedureApp:
         if file_path:
             if not (0 <= index < len(self.content)) or self.content[index].get('type') != 'image':
                 return
+            self._push_undo()
             old_path = self.content[index]['path']
             # 새 이미지 복사
             import shutil
-            temp_dir = os.path.dirname(old_path)
+            raw_dir = os.path.dirname(old_path) if old_path else ''
+            temp_dir = raw_dir if raw_dir and os.path.isdir(raw_dir) else os.path.dirname(file_path)
             new_path = os.path.join(temp_dir, f"replaced_{os.path.basename(file_path)}")
             shutil.copy(file_path, new_path)
             self.content[index]['path'] = new_path
@@ -842,8 +2030,11 @@ class NDTProcedureApp:
             return
         
         try:
+            self._push_undo()
             self.content = load_existing_doc(file_path)
             self.source_file = file_path  # 바닥글/헤더 이미지 보존을 위해 원본 경로 저장
+            self._redo_stack.clear()
+            self._update_undo_buttons()
             self.refresh_content()
             self.status_label.config(text=f"로드된 문서: {os.path.basename(file_path)} | 포함된 사진: {len(self.image_paths)}개")
             messagebox.showinfo("완료", f"문서를 로드했습니다.\n내용: {len(self.content)}개\n사진: {len(self.image_paths)}개")
@@ -851,8 +2042,16 @@ class NDTProcedureApp:
             messagebox.showerror("오류", f"문서 로드 실패: {str(e)}")
     
     def update_tree_view(self):
-        for item in self.tree.get_children():
-            self.tree.delete(item)
+        # detach된 항목은 get_children()에 포함되지 않으므로
+        # 삽입한 iid 목록을 직접 추적해서 삭제
+        if hasattr(self, '_all_tree_iids'):
+            for iid in self._all_tree_iids:
+                try:
+                    self.tree.delete(iid)
+                except Exception:
+                    pass
+        self._all_tree_iids = set()
+        self._detached_iids = set()
         for idx, item in enumerate(self.content):
             item_type = item.get('type')
             area = item.get('area', 'body')
@@ -862,11 +2061,16 @@ class NDTProcedureApp:
                 style = item.get('style', 'Normal')
                 if text:
                     self.tree.insert('', tk.END, iid=str(idx), text=str(idx + 1), values=('text', f"{area_label}{style}: {text}"))
+                    self._all_tree_iids.add(str(idx))
             elif item_type == 'image':
                 path = item.get('path', '')
-                self.tree.insert('', tk.END, iid=str(idx), text=str(idx + 1), values=('image', f"{area_label}{os.path.basename(path)}"))
+                w = item.get('width_inches', 5.0)
+                self.tree.insert('', tk.END, iid=str(idx), text=str(idx + 1), values=('image', f"{area_label}{os.path.basename(path)}  [{w}인치]"))
+                self._all_tree_iids.add(str(idx))
             elif item_type == 'table':
                 self.tree.insert('', tk.END, iid=str(idx), text=str(idx + 1), values=('table', f"{area_label}표"))
+                self._all_tree_iids.add(str(idx))
+        self._apply_tree_filter()
     
     def update_info_text(self):
         self.content_text.config(state=tk.NORMAL)
@@ -1086,6 +2290,7 @@ class NDTProcedureApp:
             if not key:
                 messagebox.showwarning("선택 없음", "추가할 항목을 선택하세요.", parent=dialog)
                 return
+            self._push_undo()
             insert_index = self.get_insert_index(position_var.get())
             self.content.insert(insert_index, {'type': 'text', 'text': standards[key],
                                                'style': 'Normal', 'area': 'body'})
@@ -1379,67 +2584,59 @@ buildList('');
             webbrowser.open(out_path)
 
     def insert_standard(self, text_area, selected):
-
         if selected and selected in self.standards:
-
             if selected == "기타":
-
                 custom_text = simpledialog.askstring("입력", "텍스트를 입력하세요:")
-
                 if custom_text:
-
                     text_area.insert(tk.INSERT, custom_text)
-
             else:
-
                 text_area.insert(tk.INSERT, self.standards[selected])
     
     def view_table_dialog(self, index):
-
         if 0 <= index < len(self.content) and self.content[index].get('type') == 'table':
-
             data = self.content[index]['data']
-
             dialog = tk.Toplevel(self.root)
-
             dialog.title("표 보기")
-
             dialog.geometry("600x400")
-
             tree = ttk.Treeview(dialog)
-
             tree.pack(fill=tk.BOTH, expand=True)
-
             if data:
-
                 num_cols = len(data[0])
-
                 tree['columns'] = [f'col{i}' for i in range(num_cols)]
-
                 for i in range(num_cols):
-
                     tree.column(f'col{i}', width=100, anchor='w')
-
                     tree.heading(f'col{i}', text=f'열 {i+1}')
-
                 for row in data:
-
                     tree.insert('', tk.END, values=row)
     
     def add_images(self):
         file_paths = filedialog.askopenfilenames(filetypes=[("Image files", "*.jpg *.jpeg *.png *.gif *.bmp")])
         if file_paths:
+            width_str = simpledialog.askstring("이미지 삽입 너비",
+                f"{len(file_paths)}개 사진의 문서 삽입 너비 (인치, 기본 5.0):",
+                initialvalue="5.0", parent=self.root)
+            try:
+                width = float(width_str) if width_str else 5.0
+                width = max(0.5, min(width, 12.0))
+            except (TypeError, ValueError):
+                width = 5.0
+            self._push_undo()
             insert_index = self.get_insert_index()
             for path in file_paths:
-                self.content.insert(insert_index, {'type': 'image', 'path': path, 'area': 'body'})
+                self.content.insert(insert_index, {
+                    'type': 'image', 'path': path,
+                    'area': 'body', 'width_inches': width
+                })
                 insert_index += 1
             self.refresh_content()
             first_new_index = insert_index - len(file_paths)
-            if str(first_new_index) in self.tree.get_children():
-                self.tree.selection_set(str(first_new_index))
-                self.tree.focus(str(first_new_index))
+            first_iid = str(first_new_index)
+            if self.tree.exists(first_iid):
+                self.tree.selection_set(first_iid)
+                self.tree.focus(first_iid)
+                self.tree.see(first_iid)
             self.status_label.config(text=f"로드된 문서: 변경됨 | 포함된 사진: {len(self.image_paths)}개")
-            messagebox.showinfo("완료", f"{len(file_paths)}개의 사진이 {first_new_index + 1}번째 위치부터 추가되었습니다.")
+            messagebox.showinfo("완료", f"{len(file_paths)}개의 사진이 {first_new_index + 1}번째 위치부터 추가되었습니다. (너비: {width}인치)")
 
     def delete_selected_item(self):
         selected = self.tree.selection()
@@ -1458,6 +2655,7 @@ buildList('');
         if not messagebox.askyesno("확인", f"선택한 {item_type} 항목을 삭제하시겠습니까?"):
             return
 
+        self._push_undo()
         del self.content[content_index]
         self.refresh_content()
         self.status_label.config(text=f"로드된 문서: 변경됨 | 포함된 사진: {len(self.image_paths)}개")
@@ -1485,13 +2683,41 @@ buildList('');
         
         item_type = self.content[content_index].get('type', 'unknown')
         
+        if item_type == 'text':
+            context_menu.add_command(
+                label="편집  (F2)",
+                command=lambda: self.edit_selected_text(item)
+            )
+        elif item_type == 'image':
+            context_menu.add_command(
+                label="이미지 교체",
+                command=lambda: self.replace_image_dialog(content_index)
+            )
+            context_menu.add_command(
+                label="📐 삽입 너비 변경",
+                command=lambda: self._change_image_width(content_index)
+            )
+        elif item_type == 'table':
+            context_menu.add_command(
+                label="표 보기",
+                command=lambda: self.view_table_dialog(content_index)
+            )
         context_menu.add_command(
-            label="편집", 
-            command=lambda: self.edit_selected_text(item)
+            label="📋 복사 (아래에 추가)",
+            command=self.duplicate_selected_item
         )
         context_menu.add_separator()
         context_menu.add_command(
-            label="삭제",
+            label="↑ 위로 이동  (Alt+↑)",
+            command=self.move_item_up
+        )
+        context_menu.add_command(
+            label="↓ 아래로 이동  (Alt+↓)",
+            command=self.move_item_down
+        )
+        context_menu.add_separator()
+        context_menu.add_command(
+            label="삭제  (Delete)",
             command=self.delete_selected_item,
             foreground="red"
         )
@@ -1502,12 +2728,303 @@ buildList('');
         finally:
             context_menu.grab_release()
     
+    def add_text_item(self):
+        """새 빈 텍스트 항목을 선택 위치 다음에 추가하고 편집 창 열기"""
+        self._push_undo()
+        insert_index = self.get_insert_index()
+        self.content.insert(insert_index, {'type': 'text', 'text': '', 'style': 'Normal', 'area': 'body'})
+        self.refresh_content()
+        iid = str(insert_index)
+        if self.tree.exists(iid):
+            self.tree.selection_set(iid)
+            self.tree.focus(iid)
+            self.tree.see(iid)
+        self.edit_text_dialog(insert_index, '')
+        self.status_label.config(text=f"로드된 문서: 변경됨 | 포함된 사진: {len(self.image_paths)}개")
+
+    def move_item_up(self):
+        """선택 항목을 한 칸 위로 이동 (단축키: Alt+↑)"""
+        selected = self.tree.selection()
+        if not selected:
+            return
+        idx = int(selected[0])
+        if idx <= 0:
+            return
+        self._push_undo()
+        self.content[idx], self.content[idx - 1] = self.content[idx - 1], self.content[idx]
+        self.refresh_content()
+        new_iid = str(idx - 1)
+        if self.tree.exists(new_iid):
+            self.tree.selection_set(new_iid)
+            self.tree.focus(new_iid)
+            self.tree.see(new_iid)
+
+    def move_item_down(self):
+        """선택 항목을 한 칸 아래로 이동 (단축키: Alt+↓)"""
+        selected = self.tree.selection()
+        if not selected:
+            return
+        idx = int(selected[0])
+        if idx >= len(self.content) - 1:
+            return
+        self._push_undo()
+        self.content[idx], self.content[idx + 1] = self.content[idx + 1], self.content[idx]
+        self.refresh_content()
+        new_iid = str(idx + 1)
+        if self.tree.exists(new_iid):
+            self.tree.selection_set(new_iid)
+            self.tree.focus(new_iid)
+            self.tree.see(new_iid)
+
+    def duplicate_selected_item(self):
+        """선택 항목을 바로 아래에 복사"""
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("선택 필요", "복사할 항목을 먼저 선택하세요.")
+            return
+        idx = int(selected[0])
+        if not (0 <= idx < len(self.content)):
+            return
+        self._push_undo()
+        new_item = copy.deepcopy(self.content[idx])
+        self.content.insert(idx + 1, new_item)
+        self.refresh_content()
+        new_iid = str(idx + 1)
+        if self.tree.exists(new_iid):
+            self.tree.selection_set(new_iid)
+            self.tree.focus(new_iid)
+            self.tree.see(new_iid)
+        self.status_label.config(text=f"로드된 문서: 변경됨 | 포함된 사진: {len(self.image_paths)}개")
+
     def clear_all(self):
         if messagebox.askyesno("확인", "모든 내용을 초기화하시겠습니까?"):
             self.content = []
+            self.source_file = None
+            self._undo_stack.clear()
+            self._redo_stack.clear()
+            self._update_undo_buttons()
             self.refresh_content()
             self.status_label.config(text="로드된 문서: 없음 | 포함된 사진: 0개")
     
+    # ── Undo / Redo ──────────────────────────────────────────
+    def _push_undo(self):
+        """현재 content 상태를 undo 스택에 저장 (최대 30단계)"""
+        self._undo_stack.append((copy.deepcopy(self.content), self.source_file))
+        if len(self._undo_stack) > 30:
+            self._undo_stack.pop(0)
+        self._redo_stack.clear()
+        self._update_undo_buttons()
+
+    def _update_undo_buttons(self):
+        """Undo/Redo 버튼 활성·비활성 상태 동기화"""
+        try:
+            self._undo_btn.config(state=tk.NORMAL if self._undo_stack else tk.DISABLED)
+            self._redo_btn.config(state=tk.NORMAL if self._redo_stack else tk.DISABLED)
+        except Exception:
+            pass
+
+    def undo(self):
+        """이전 상태로 되돌리기 (Ctrl+Z)"""
+        if not self._undo_stack:
+            return
+        self._redo_stack.append((copy.deepcopy(self.content), self.source_file))
+        self.content, self.source_file = self._undo_stack.pop()
+        self._update_undo_buttons()
+        self.refresh_content()
+        self.status_label.config(text=f"↩ 실행 취소  | 항목 수: {len(self.content)}개")
+
+    def redo(self):
+        """되돌리기 취소 (Ctrl+Y)"""
+        if not self._redo_stack:
+            return
+        self._undo_stack.append((copy.deepcopy(self.content), self.source_file))
+        self.content, self.source_file = self._redo_stack.pop()
+        self._update_undo_buttons()
+        self.refresh_content()
+        self.status_label.config(text=f"↪ 다시 실행  | 항목 수: {len(self.content)}개")
+
+    # ── 초안 저장 / 불러오기 ─────────────────────────────────
+    def _git_version_save(self, file_path: str) -> str:
+        """
+        file_path가 속한 폴더가 git 저장소이면
+        해당 파일을 stage하고 자동 커밋한다.
+        커밋 메시지에는 파일명 + 저장 시각이 포함된다.
+        반환값: 상태 메시지 문자열 (UI 표시용)
+        """
+        try:
+            file_path = os.path.abspath(file_path)
+            folder = os.path.dirname(file_path)
+            fname = os.path.basename(file_path)
+
+            # git 실행 가능 여부 확인
+            try:
+                subprocess.run(
+                    ['git', '--version'],
+                    capture_output=True, check=True
+                )
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                return ''  # git 없으면 조용히 종료
+
+            # 해당 경로가 git 저장소 안에 있는지 확인
+            result = subprocess.run(
+                ['git', 'rev-parse', '--show-toplevel'],
+                cwd=folder,
+                capture_output=True, text=True
+            )
+            if result.returncode != 0:
+                return ''  # git 저장소 아님
+
+            repo_root = result.stdout.strip()
+
+            # git add (파일의 git 저장소 내 상대 경로)
+            rel_path = os.path.relpath(file_path, repo_root)
+            subprocess.run(
+                ['git', 'add', rel_path],
+                cwd=repo_root,
+                capture_output=True, check=True
+            )
+
+            # 변경사항이 있는지 확인 (stage된 변경)
+            status = subprocess.run(
+                ['git', 'diff', '--cached', '--name-only'],
+                cwd=repo_root,
+                capture_output=True, text=True
+            )
+            if not status.stdout.strip():
+                return '\n[Git] 변경 없음 (커밋 생략)'
+
+            # 커밋 메시지: 파일명 + 저장 시각
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            commit_msg = f'Auto-save: {fname} [{timestamp}]'
+            commit_result = subprocess.run(
+                ['git', 'commit', '-m', commit_msg],
+                cwd=repo_root,
+                capture_output=True, text=True
+            )
+            if commit_result.returncode == 0:
+                # 커밋 해시 앞 7자리
+                hash_result = subprocess.run(
+                    ['git', 'rev-parse', '--short', 'HEAD'],
+                    cwd=repo_root,
+                    capture_output=True, text=True
+                )
+                short_hash = hash_result.stdout.strip()
+                return f'\n[Git] 커밋 완료 ({short_hash}) — {timestamp}'
+            else:
+                return f'\n[Git] 커밋 실패: {commit_result.stderr.strip()[:80]}'
+
+        except Exception as e:
+            return f'\n[Git] 오류: {str(e)[:80]}'
+
+    def save_draft(self):
+        """작업 중인 content를 JSON 초안으로 저장 (이미지는 경로만 저장)"""
+        path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("NDT 초안 파일", "*.json"), ("모든 파일", "*.*")],
+            initialfile="ndt_draft.json",
+            title="초안 저장"
+        )
+        if not path:
+            return
+        serializable = []
+        for item in self.content:
+            entry = {k: v for k, v in item.items() if k != 'element'}
+            serializable.append(entry)
+        draft = {
+            'source_file': self.source_file or '',
+            'title': self.new_title_entry.get(),
+            'content': serializable
+        }
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(draft, f, ensure_ascii=False, indent=2)
+            git_msg = self._git_version_save(path)
+            self.status_label.config(text=f"초안 저장 완료: {os.path.basename(path)}{git_msg}")
+        except Exception as e:
+            messagebox.showerror("오류", f"초안 저장 실패:\n{e}")
+
+    def load_draft(self):
+        """저장된 JSON 초안 불러오기"""
+        path = filedialog.askopenfilename(
+            filetypes=[("NDT 초안 파일", "*.json"), ("모든 파일", "*.*")],
+            title="초안 불러오기"
+        )
+        if not path:
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                draft = json.load(f)
+            self._push_undo()
+            self.content = draft.get('content', [])
+            sf = draft.get('source_file', '')
+            self.source_file = sf if sf and os.path.exists(sf) else None
+            title = draft.get('title', '')
+            if title:
+                self.new_title_entry.delete(0, tk.END)
+                self.new_title_entry.insert(0, title)
+            self.refresh_content()
+            self.status_label.config(text=f"초안 불러오기 완료: {os.path.basename(path)}")
+        except Exception as e:
+            messagebox.showerror("오류", f"초안 불러오기 실패:\n{e}")
+
+    # ── 트리뷰 검색 필터 ─────────────────────────────────────
+    def _apply_tree_filter(self):
+        """검색어에 맞지 않는 트리 항목을 detach로 숨김"""
+        try:
+            query = self._tree_filter_var.get().lower().strip()
+        except Exception:
+            return
+
+        # detach된 항목을 별도 집합으로 추적해서 확실하게 reattach
+        if not hasattr(self, '_detached_iids'):
+            self._detached_iids = set()
+
+        for iid in list(self._detached_iids):
+            try:
+                self.tree.reattach(iid, '', 'end')
+            except Exception:
+                pass
+        self._detached_iids = set()
+
+        if not query:
+            return
+
+        for iid in list(self.tree.get_children('')):
+            try:
+                values = self.tree.item(iid, 'values')
+                text = ' '.join(str(v) for v in values).lower()
+                if query not in text:
+                    self.tree.detach(iid)
+                    self._detached_iids.add(iid)
+            except Exception:
+                pass
+
+    # ── 이미지 너비 변경 ─────────────────────────────────────
+    def _change_image_width(self, index):
+        """선택 이미지 항목의 문서 삽입 너비 변경"""
+        if not (0 <= index < len(self.content)):
+            return
+        current_w = self.content[index].get('width_inches', 5.0)
+        new_w_str = simpledialog.askstring(
+            "이미지 너비 변경",
+            f"새 너비 (인치, 현재: {current_w}인치):",
+            initialvalue=str(current_w),
+            parent=self.root
+        )
+        try:
+            new_w = float(new_w_str) if new_w_str else current_w
+            new_w = max(0.5, min(new_w, 12.0))
+        except (TypeError, ValueError):
+            return
+        self._push_undo()
+        self.content[index]['width_inches'] = new_w
+        self.refresh_content()
+        iid = str(index)
+        if self.tree.exists(iid):
+            self.tree.selection_set(iid)
+            self.tree.focus(iid)
+            self.tree.see(iid)
+
     def generate_document(self):
         if not self.content:
             messagebox.showerror("오류", "로드된 내용이 없습니다.")
@@ -1600,7 +3117,8 @@ buildList('');
                     path = item.get('path', '')
                     if os.path.exists(path):
                         try:
-                            doc.add_picture(path, width=Inches(5))
+                            w = item.get('width_inches', 5.0)
+                            doc.add_picture(path, width=Inches(w))
                             doc.add_paragraph()
                         except:
                             pass
@@ -1624,7 +3142,8 @@ buildList('');
         output_file = filedialog.asksaveasfilename(defaultextension=".docx", filetypes=[("Word files", "*.docx")])
         if output_file:
             doc.save(output_file)
-            messagebox.showinfo("완료", f"문서가 저장되었습니다:\n{output_file}")
+            git_msg = self._git_version_save(output_file)
+            messagebox.showinfo("완료", f"문서가 저장되었습니다:\n{output_file}{git_msg}")
     
     def load_window_geometry(self):
         """저장된 창 크기 로드"""
