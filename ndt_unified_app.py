@@ -1761,22 +1761,27 @@ class NDTProcedureApp:
         main_frame = tk.Frame(root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        paned = tk.PanedWindow(main_frame, orient=tk.HORIZONTAL, sashrelief=tk.RAISED,
+        self._paned = tk.PanedWindow(main_frame, orient=tk.HORIZONTAL, sashrelief=tk.RAISED,
                                sashwidth=6, bg="#cccccc")
-        paned.pack(fill=tk.BOTH, expand=True)
+        self._paned.pack(fill=tk.BOTH, expand=True)
 
-        left_frame = tk.Frame(paned)
-        paned.add(left_frame, stretch='always', minsize=400)
+        left_frame = tk.Frame(self._paned)
+        self._paned.add(left_frame, stretch='always', minsize=400)
 
-        right_frame = tk.Frame(paned, bg="white", relief=tk.FLAT)
-        paned.add(right_frame, stretch='always', minsize=280)
+        right_frame = tk.Frame(self._paned, bg="white", relief=tk.FLAT)
+        self._paned.add(right_frame, stretch='always', minsize=280)
 
-        # 창 표시 후 초기 비율 설정 (좌 70% : 우 30%)
+        # sash 드래그 후 위치 저장
+        self._paned.bind('<ButtonRelease-1>', lambda e: self._save_sash_position())
+
+        # 창 표시 후 초기 비율 설정 (저장된 위치 복원 또는 좌 70% : 우 30%)
         def _set_sash(event=None):
             try:
-                total = paned.winfo_width()
+                total = self._paned.winfo_width()
                 if total > 100:
-                    paned.sash_place(0, int(total * 0.70), 0)
+                    saved = self._load_sash_position()
+                    pos = saved if saved and saved < total - 280 else int(total * 0.70)
+                    self._paned.sash_place(0, pos, 0)
                     root.unbind('<Map>', _map_id[0])
             except Exception:
                 pass
@@ -1878,7 +1883,7 @@ class NDTProcedureApp:
                 self.replace_image_dialog(content_index)
         elif values[0] == 'table':
             if 0 <= content_index < len(self.content):
-                self.view_table_dialog(content_index)
+                self.edit_table_dialog(content_index)
         else:
             self.edit_selected_text(item)
 
@@ -1908,7 +1913,14 @@ class NDTProcedureApp:
             if ranges:
                 self.content_text.tag_remove("_hl_sel", "1.0", tk.END)
                 self.content_text.tag_add("_hl_sel", ranges[0], ranges[1])
-                self.content_text.tag_config("_hl_sel", background="#fff3cd")
+                # 선택 색상: 타입별 기본색보다 진하게 + 텍스트 화이트
+                itype = self.content[idx].get('type', 'text') if idx < len(self.content) else 'text'
+                hl_colors = {'text': '#1565c0', 'image': '#2e7d32', 'table': '#e65100'}
+                hl_bg =     {'text': '#bbdefb', 'image': '#c8e6c9', 'table': '#ffe0b2'}
+                self.content_text.tag_config("_hl_sel",
+                    background=hl_bg.get(itype, '#fff3cd'),
+                    foreground=hl_colors.get(itype, '#333'),
+                    font=("Malgun Gothic", 9, "bold"))
                 self.content_text.see(ranges[0])
         except Exception:
             pass
@@ -2104,19 +2116,21 @@ class NDTProcedureApp:
         self.content_text.insert(tk.END, "\n---\n\n")
         
         text_counter = 1
+        item_positions = {}  # {idx: (start_pos, end_pos)} - 태그는 루프 후 일괄 적용
+
         for idx, item in enumerate(self.content):
             area = item.get('area', 'body')
             area_label = '' if area == 'body' else f"[{ '머릿글' if area == 'header' else '바닥글' }]\n"
-            tag = f"item_{idx}"
             start_pos = self.content_text.index(tk.END)
             if item['type'] == 'text':
                 text = item.get('text', '').replace('\n', '\n')
                 style = item.get('style', 'Normal')
                 if text:
-                    self.content_text.insert(tk.END, f"{text_counter}. {area_label}[{style}]\n{text}\n\n")
+                    self.content_text.insert(tk.END, f"■ {idx+1}번 — [{style}]  {area_label}\n{text}\n\n")
                     text_counter += 1
             elif item['type'] == 'image':
                 path = item['path']
+                self.content_text.insert(tk.END, f"🖼 {idx+1}번 — [이미지]  {area_label}{os.path.basename(path)}\n")
                 if os.path.exists(path):
                     try:
                         img = Image.open(path)
@@ -2127,14 +2141,26 @@ class NDTProcedureApp:
                         self.content_text.insert(tk.END, "\n\n")
                     except Exception as e:
                         self.content_text.insert(tk.END, f"[이미지 로드 실패: {e}]\n\n")
+                else:
+                    self.content_text.insert(tk.END, "[파일 없음]\n\n")
             elif item['type'] == 'table':
                 table_data = item['data']
-                table_text = f"{area_label}[표]\n" + "\n".join("\t".join(row) for row in table_data) + "\n\n"
+                self.content_text.insert(tk.END, f"🗒 {idx+1}번 — [표]  {area_label}{len(table_data)}행 × {len(table_data[0]) if table_data else 0}열\n")
+                table_text = "\n".join("  " + "  |  ".join(str(c) for c in row) for row in table_data) + "\n\n"
                 self.content_text.insert(tk.END, table_text)
-            end_pos = self.content_text.index(tk.END)
+            # tk.END는 항상 "마지막+1줄" 위치라 다음 항목과 경계가 겹침
+            # → 실제 삽입된 마지막 문자 바로 다음 위치를 end_pos로 정확히 기록
+            raw_end = self.content_text.index(tk.END)
+            # END는 "\n"이 자동 추가된 위치이므로 -1c 로 실제 내용 끝을 구함
+            end_pos = self.content_text.index(f"{raw_end} -1c")
             if self.content_text.compare(start_pos, '<', end_pos):
-                self.content_text.tag_add(tag, start_pos, end_pos)
-        
+                item_positions[idx] = (start_pos, end_pos)
+
+        # ─── 모든 삽입 완료 후 일괄 태그 적용 ─────────────────────
+        # 삽입이 끝난 뒤 tag_add → right-gravity 영향 없음 → 정확한 범위 보장
+        for idx, (start, end) in item_positions.items():
+            self.content_text.tag_add(f"item_{idx}", start, end)
+
         self.content_text.config(state=tk.DISABLED)
     
     def update_image_preview(self):
@@ -2610,22 +2636,128 @@ buildList('');
             else:
                 text_area.insert(tk.INSERT, self.standards[selected])
     
-    def view_table_dialog(self, index):
-        if 0 <= index < len(self.content) and self.content[index].get('type') == 'table':
-            data = self.content[index]['data']
-            dialog = tk.Toplevel(self.root)
-            dialog.title("표 보기")
-            dialog.geometry("600x400")
-            tree = ttk.Treeview(dialog)
-            tree.pack(fill=tk.BOTH, expand=True)
-            if data:
-                num_cols = len(data[0])
-                tree['columns'] = [f'col{i}' for i in range(num_cols)]
-                for i in range(num_cols):
-                    tree.column(f'col{i}', width=100, anchor='w')
-                    tree.heading(f'col{i}', text=f'열 {i+1}')
+    def edit_table_dialog(self, index):
+        if not (0 <= index < len(self.content)) or self.content[index].get('type') != 'table':
+            return
+
+        data = [list(row) for row in self.content[index]['data']]  # 깊은 복사
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"표 편집  (항목 #{index + 1})")
+        dialog.geometry("860x540")
+        dialog.resizable(True, True)
+
+        # 상단 툴바
+        toolbar = tk.Frame(dialog, bg="#e8f4fd", relief=tk.RIDGE, bd=1)
+        toolbar.pack(fill=tk.X)
+
+        entry_widgets = []
+
+        def get_current_data():
+            return [[e.get() for e in row_ents] for row_ents in entry_widgets]
+
+        def save_table():
+            self._push_undo()
+            self.content[index]['data'] = get_current_data()
+            self.refresh_content()
+            self.status_label.config(text=f"로드된 문서: 변경됨 | 포함된 사진: {len(self.image_paths)}개")
+            dialog.destroy()
+
+        tk.Button(toolbar, text="💾  저장 (Ctrl+Enter)", command=save_table,
+                  bg="#2196F3", fg="white", padx=15, pady=4,
+                  font=("Arial", 10, "bold")).pack(side=tk.LEFT, padx=10, pady=5)
+        tk.Button(toolbar, text="✕  닫기", command=dialog.destroy,
+                  bg="#f44336", fg="white", padx=12, pady=4,
+                  font=("Arial", 10)).pack(side=tk.LEFT, padx=5, pady=5)
+        tk.Button(toolbar, text="＋ 행 추가", command=lambda: add_row(),
+                  bg="#4caf50", fg="white", padx=8, pady=4,
+                  font=("Arial", 9)).pack(side=tk.LEFT, padx=5, pady=5)
+        tk.Button(toolbar, text="－ 행 삭제", command=lambda: del_row(),
+                  bg="#ff9800", fg="white", padx=8, pady=4,
+                  font=("Arial", 9)).pack(side=tk.LEFT, padx=5, pady=5)
+        tk.Button(toolbar, text="＋ 열 추가", command=lambda: add_col(),
+                  bg="#9c27b0", fg="white", padx=8, pady=4,
+                  font=("Arial", 9)).pack(side=tk.LEFT, padx=5, pady=5)
+        tk.Button(toolbar, text="－ 열 삭제", command=lambda: del_col(),
+                  bg="#795548", fg="white", padx=8, pady=4,
+                  font=("Arial", 9)).pack(side=tk.LEFT, padx=5, pady=5)
+        tk.Label(toolbar, text="※ 셀 클릭 후 직접 입력",
+                 font=("Arial", 8), bg="#e8f4fd", fg="#666").pack(side=tk.LEFT, padx=10)
+
+        # 스크롤 가능 영역
+        canvas_outer = tk.Frame(dialog)
+        canvas_outer.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        canvas = tk.Canvas(canvas_outer, bg="white")
+        vbar = tk.Scrollbar(canvas_outer, orient=tk.VERTICAL, command=canvas.yview)
+        hbar = tk.Scrollbar(canvas_outer, orient=tk.HORIZONTAL, command=canvas.xview)
+        vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        hbar.pack(side=tk.BOTTOM, fill=tk.X)
+        canvas.pack(fill=tk.BOTH, expand=True)
+        canvas.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
+
+        grid_frame = tk.Frame(canvas, bg="white")
+        canvas.create_window((0, 0), window=grid_frame, anchor='nw')
+        grid_frame.bind('<Configure>', lambda e: canvas.configure(scrollregion=canvas.bbox('all')))
+
+        def build_grid():
+            for w in grid_frame.winfo_children():
+                w.destroy()
+            entry_widgets.clear()
+            ncols = len(data[0]) if data else 0
+            # 열 헤더
+            tk.Label(grid_frame, text="", bg="#bbdefb", relief=tk.RIDGE,
+                     width=4).grid(row=0, column=0, padx=1, pady=1, sticky='nsew')
+            for c in range(ncols):
+                tk.Label(grid_frame, text=f"열 {c+1}", font=("Arial", 8, "bold"),
+                         bg="#bbdefb", relief=tk.RIDGE, width=18).grid(
+                         row=0, column=c+1, padx=1, pady=1, sticky='nsew')
+            # 데이터 행
+            for r, row in enumerate(data):
+                tk.Label(grid_frame, text=str(r+1), font=("Arial", 8),
+                         bg="#e3f2fd", relief=tk.RIDGE, width=4).grid(
+                         row=r+1, column=0, padx=1, pady=1, sticky='nsew')
+                row_entries = []
+                for c, cell in enumerate(row):
+                    ent = tk.Entry(grid_frame, font=("Malgun Gothic", 9),
+                                   width=20, relief=tk.SOLID, bd=1)
+                    ent.insert(0, str(cell) if cell is not None else '')
+                    ent.grid(row=r+1, column=c+1, padx=1, pady=1, sticky='nsew')
+                    row_entries.append(ent)
+                entry_widgets.append(row_entries)
+
+        def add_row():
+            nonlocal data
+            data = get_current_data()
+            ncols = len(data[0]) if data else 1
+            data.append([''] * ncols)
+            build_grid()
+
+        def del_row():
+            nonlocal data
+            data = get_current_data()
+            if len(data) > 1:
+                data.pop()
+                build_grid()
+
+        def add_col():
+            nonlocal data
+            data = get_current_data()
+            for row in data:
+                row.append('')
+            build_grid()
+
+        def del_col():
+            nonlocal data
+            data = get_current_data()
+            if data and len(data[0]) > 1:
                 for row in data:
-                    tree.insert('', tk.END, values=row)
+                    row.pop()
+                build_grid()
+
+        build_grid()
+        dialog.bind('<Control-Return>', lambda e: save_table())
+        dialog.bind('<Escape>', lambda e: dialog.destroy())
     
     def add_images(self):
         file_paths = filedialog.askopenfilenames(filetypes=[("Image files", "*.jpg *.jpeg *.png *.gif *.bmp")])
@@ -2717,8 +2849,8 @@ buildList('');
             )
         elif item_type == 'table':
             context_menu.add_command(
-                label="표 보기",
-                command=lambda: self.view_table_dialog(content_index)
+                label="✏ 표 편집",
+                command=lambda: self.edit_table_dialog(content_index)
             )
         context_menu.add_command(
             label="📋 복사 (아래에 추가)",
@@ -3023,6 +3155,11 @@ buildList('');
                 pass
         self._detached_iids = set()
 
+        # reattach 후 번호 순서로 정렬 (detach→reattach 시 순서 뒤섞임 방지)
+        all_iids = self.tree.get_children('')
+        for idx, iid in enumerate(sorted(all_iids, key=lambda x: int(x))):
+            self.tree.move(iid, '', idx)
+
         if not query:
             return
 
@@ -3193,6 +3330,31 @@ buildList('');
         except:
             pass
         return '1400x850'
+
+    def _load_sash_position(self):
+        """저장된 PanedWindow sash 위치 로드 (없으면 None)"""
+        try:
+            if os.path.exists(self.CONFIG_FILE):
+                with open(self.CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+                    return config.get('sash_position', None)
+        except:
+            pass
+        return None
+
+    def _save_sash_position(self):
+        """현재 PanedWindow sash 위치 저장"""
+        try:
+            pos = self._paned.sash_coord(0)[0]
+            config = {}
+            if os.path.exists(self.CONFIG_FILE):
+                with open(self.CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    config = json.load(f)
+            config['sash_position'] = pos
+            with open(self.CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(config, f, ensure_ascii=False, indent=2)
+        except:
+            pass
     
     def save_window_geometry(self):
         """현재 창 크기 저장"""
