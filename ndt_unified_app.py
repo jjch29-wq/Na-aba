@@ -1760,12 +1760,28 @@ class NDTProcedureApp:
         # 가운데 내용 영역
         main_frame = tk.Frame(root)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        left_frame = tk.Frame(main_frame)
-        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
-        
-        right_frame = tk.Frame(main_frame)
-        right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=False, padx=(5, 0))
+
+        paned = tk.PanedWindow(main_frame, orient=tk.HORIZONTAL, sashrelief=tk.RAISED,
+                               sashwidth=6, bg="#cccccc")
+        paned.pack(fill=tk.BOTH, expand=True)
+
+        left_frame = tk.Frame(paned)
+        paned.add(left_frame, stretch='always', minsize=400)
+
+        right_frame = tk.Frame(paned, bg="white", relief=tk.FLAT)
+        paned.add(right_frame, stretch='always', minsize=280)
+
+        # 창 표시 후 초기 비율 설정 (좌 70% : 우 30%)
+        def _set_sash(event=None):
+            try:
+                total = paned.winfo_width()
+                if total > 100:
+                    paned.sash_place(0, int(total * 0.70), 0)
+                    root.unbind('<Map>', _map_id[0])
+            except Exception:
+                pass
+        _map_id = [None]
+        _map_id[0] = root.bind('<Map>', _set_sash)
         
         # 트리뷰 검색창
         search_row = tk.Frame(left_frame)
@@ -1815,7 +1831,9 @@ class NDTProcedureApp:
         content_scrollbar = tk.Scrollbar(content_frame)
         content_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        self.content_text = tk.Text(content_frame, width=60, wrap=tk.WORD, yscrollcommand=content_scrollbar.set)
+        self.content_text = tk.Text(content_frame, wrap=tk.WORD,
+                                     font=("Malgun Gothic", 9),
+                                     yscrollcommand=content_scrollbar.set)
         self.content_text.pack(fill=tk.BOTH, expand=True)
         content_scrollbar.config(command=self.content_text.yview)
         self.content_text.config(state=tk.DISABLED)
@@ -1826,7 +1844,7 @@ class NDTProcedureApp:
         image_preview_label = tk.Label(right_frame, text="이미지 미리보기", font=("Arial", 11, "bold"))
         image_preview_label.pack(anchor='w', pady=(10, 0))
         
-        self.image_canvas = tk.Canvas(right_frame, height=220)
+        self.image_canvas = tk.Canvas(right_frame, height=160)
         self.image_canvas.pack(fill=tk.X, pady=5)
         self.image_frame = tk.Frame(self.image_canvas)
         self.image_canvas.create_window((0, 0), window=self.image_frame, anchor='nw')
