@@ -2127,10 +2127,11 @@ class NDTProcedureApp:
             area_label = '' if area == 'body' else f"[{ '머릿글' if area == 'header' else '바닥글' }]\n"
             start_pos = self.content_text.index(tk.END)
             if item['type'] == 'text':
-                text = item.get('text', '').replace('\n', '\n')
+                raw_text = item.get('text', '')
                 style = item.get('style', 'Normal')
-                if text:
-                    self.content_text.insert(tk.END, f"■ {visible_num}번 — [{style}]  {area_label}\n{text}\n\n")
+                # strip()으로 공백만 있는 항목 제외 (tree_view와 동일한 기준)
+                if raw_text.strip():
+                    self.content_text.insert(tk.END, f"■ {visible_num}번 — [{style}]  {area_label}\n{raw_text}\n\n")
                     visible_num += 1
             elif item['type'] == 'image':
                 path = item['path']
