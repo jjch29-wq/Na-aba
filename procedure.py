@@ -2200,18 +2200,19 @@ class NDTProcedureApp:
     
     def _renumber_sections(self):
         """텍스트 내 섹션 번호 자동 재정렬 — 삭제·삽입·이동 모두 대응
-        문서 순서 기준으로 순번을 1,2,3... 재배정 (위치 기반 단일 패스)
-        예) 삭제: 3.0,3.2,3.3 → 3.0,3.1,3.2
-            삽입: 3.0,3.1,3.2(신규),3.2(기존) → 3.0,3.1,3.2,3.3
+        N.M / N.M.P / N.M.P.Q 등 임의 깊이 섹션 번호 처리
+        예) 4.8.4.2 삭제 → 4.8.4.3 → 4.8.4.2
+            3.1 삭제 → 3.2→3.1, 3.3→3.2
+            7.0 삭제 → 8.0→7.0, 8.1→7.1 (캐스케이딩)
         """
         import re
 
-        # 패턴: 선행 공백 + 숫자.숫자 + (공백+내용 또는 줄끝)
-        section_re = re.compile(r'^(\s*)(\d+)\.(\d+)(\s[\s\S]*|$)', re.DOTALL)
+        # 숫자.숫자 이상의 섹션 번호 (최소 점 하나 이상)
+        # 뒤에 반드시 공백 또는 줄끝 — "3.14mm" 같은 소수 오매칭 방지
+        section_re = re.compile(r'^(\s*)(\d+(?:\.\d+)+)(?=\s|$)([\s\S]*)$', re.DOTALL)
 
-        # 단일 패스: 문서 순서대로 순번 배정
-        new_top = 0      # 최상위 섹션 카운터 (N.0)
-        sub_counter = 0  # 현재 그룹 내 하위 카운터
+        prefix_counter = {}  # {new_parent_str: 현재 카운터}
+        old_to_new = {}      # {old_num_str: new_num_str}  캐스케이딩용
         changed = False
 
         for item in self.content:
@@ -2221,24 +2222,48 @@ class NDTProcedureApp:
             m = section_re.match(text)
             if not m:
                 continue
-            old_n = int(m.group(2))
-            old_sub = int(m.group(3))
 
-            if old_sub == 0:
-                # 최상위 섹션 N.0
-                new_top += 1
-                sub_counter = 0
-                new_n, new_sub = new_top, 0
-            elif new_top > 0:
-                # 하위 섹션 N.M — 현재 최상위 그룹에 귀속
-                sub_counter += 1
-                new_n, new_sub = new_top, sub_counter
-            else:
-                # 최상위 섹션 없이 하위가 먼저 나온 경우 → 스킵
+            leading      = m.group(1)
+            old_num_str  = m.group(2)   # 예: "4.8.4.3"
+            rest         = m.group(3)   # 예: " Acceptance Standards"
+
+            parts = old_num_str.split('.')
+            if len(parts) < 2:
                 continue
 
-            if new_n != old_n or new_sub != old_sub:
-                item['text'] = f'{m.group(1)}{new_n}.{new_sub}{m.group(4)}'
+            last_val       = int(parts[-1])
+            old_parent_str = '.'.join(parts[:-1])   # 예: "4.8.4"
+
+            # 부모가 이미 재정렬됐으면 새 번호로 매핑
+            new_parent_str = old_to_new.get(old_parent_str, old_parent_str)
+
+            if last_val == 0:
+                # N.0 / N.M.0 형식 — 상위 섹션 헤더
+                # 조부모 기준으로 카운터 증가
+                parent_parts = new_parent_str.split('.')
+                if len(parent_parts) == 1:
+                    gp = ''  # 최상위 (루트)
+                else:
+                    gp_raw = '.'.join(parent_parts[:-1])
+                    gp = old_to_new.get(gp_raw, gp_raw)
+
+                prefix_counter[gp] = prefix_counter.get(gp, 0) + 1
+                new_n = prefix_counter[gp]
+                new_parent_actual = f"{gp}.{new_n}" if gp else str(new_n)
+                new_num_str = f"{new_parent_actual}.0"
+
+                # 부모 번호 자체를 매핑 → 하위 항목 캐스케이딩 지원
+                old_to_new[old_parent_str] = new_parent_actual
+                old_to_new[old_num_str]    = new_num_str
+            else:
+                # 일반 하위 항목 (N.M, N.M.P, N.M.P.Q …)
+                prefix_counter[new_parent_str] = prefix_counter.get(new_parent_str, 0) + 1
+                new_last    = prefix_counter[new_parent_str]
+                new_num_str = f"{new_parent_str}.{new_last}"
+                old_to_new[old_num_str] = new_num_str
+
+            if new_num_str != old_num_str:
+                item['text'] = f'{leading}{new_num_str}{rest}'
                 changed = True
 
         return changed
