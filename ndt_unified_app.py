@@ -2909,7 +2909,26 @@ buildList('');
                     capture_output=True, text=True
                 )
                 short_hash = hash_result.stdout.strip()
-                return f'\n[Git] 커밋 완료 ({short_hash}) — {timestamp}'
+
+                # 원격 저장소(origin) 존재 시 자동 push
+                remote_check = subprocess.run(
+                    ['git', 'remote'],
+                    cwd=repo_root,
+                    capture_output=True, text=True
+                )
+                push_msg = ''
+                if 'origin' in remote_check.stdout:
+                    push_result = subprocess.run(
+                        ['git', 'push', 'origin', 'HEAD'],
+                        cwd=repo_root,
+                        capture_output=True, text=True
+                    )
+                    if push_result.returncode == 0:
+                        push_msg = ' → GitHub push 완료'
+                    else:
+                        push_msg = f' → push 실패: {push_result.stderr.strip()[:60]}'
+
+                return f'\n[Git] 커밋 완료 ({short_hash}) — {timestamp}{push_msg}'
             else:
                 return f'\n[Git] 커밋 실패: {commit_result.stderr.strip()[:80]}'
 
