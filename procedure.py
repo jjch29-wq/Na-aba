@@ -2199,15 +2199,15 @@ class NDTProcedureApp:
     
     def _renumber_sections(self):
         """삭제 후 텍스트 내 섹션 번호 자동 재정렬 (N.0 / N.M 형식)
-        예) 7.0 삭제 → 8.0 Acceptance → 7.0 Acceptance 로 자동 변환
+        예) 3.1 삭제 → 3.2→3.1, 3.3→3.2  /  7.0 삭제 → 8.0→7.0, 8.1→7.1 등
         """
         import re
 
         # 패턴: 선행 공백 + 숫자.숫자 + (공백+내용 또는 줄끝)
         section_re = re.compile(r'^(\s*)(\d+)\.(\d+)(\s[\s\S]*|$)', re.DOTALL)
 
-        # Pass 1: N.0 항목을 순서대로 수집 → 새 번호 매핑 생성
-        old_to_new = {}
+        # ── Pass 1: 최상위 번호(N.0) 매핑 ─────────────────────────────
+        old_to_new_top = {}  # {old_n: new_n}
         new_top = 0
         for item in self.content:
             if item.get('type') != 'text':
@@ -2215,14 +2215,40 @@ class NDTProcedureApp:
             m = section_re.match(item.get('text', ''))
             if m and m.group(3) == '0':
                 old_n = int(m.group(2))
-                if old_n not in old_to_new:   # 같은 번호 중복 방지
+                if old_n not in old_to_new_top:
                     new_top += 1
-                    old_to_new[old_n] = new_top
+                    old_to_new_top[old_n] = new_top
 
-        if not old_to_new or all(k == v for k, v in old_to_new.items()):
-            return False  # 섹션 없음 또는 변경 불필요
+        # ── Pass 2: 하위 번호(N.M, M>0) 매핑 ─────────────────────────
+        # 문서 순서대로 순회하며 각 N 그룹의 하위 번호를 1,2,3... 재배정
+        old_to_new_sub = {}  # {(old_n, old_m): new_m}
+        sub_counter = {}     # {old_n: 현재 카운터}
+        for item in self.content:
+            if item.get('type') != 'text':
+                continue
+            m = section_re.match(item.get('text', ''))
+            if not m:
+                continue
+            old_n = int(m.group(2))
+            old_sub = int(m.group(3))
+            if old_sub == 0:
+                sub_counter[old_n] = 0          # N.0 만나면 카운터 초기화
+            else:
+                if old_n not in sub_counter:
+                    sub_counter[old_n] = 0      # N.0 없이 N.M 먼저 나온 경우
+                sub_counter[old_n] += 1
+                key = (old_n, old_sub)
+                if key not in old_to_new_sub:   # 중복 방지
+                    old_to_new_sub[key] = sub_counter[old_n]
 
-        # Pass 2: N.M 텍스트 일괄 업데이트
+        # 변경이 필요한지 확인
+        top_changed = any(k != v for k, v in old_to_new_top.items())
+        sub_changed = any(old_sub != new_sub
+                          for (_, old_sub), new_sub in old_to_new_sub.items())
+        if not top_changed and not sub_changed:
+            return False
+
+        # ── Pass 3: 실제 텍스트 일괄 업데이트 ────────────────────────
         changed = False
         for item in self.content:
             if item.get('type') != 'text':
@@ -2232,12 +2258,12 @@ class NDTProcedureApp:
             if not m:
                 continue
             old_n = int(m.group(2))
-            if old_n in old_to_new:
-                new_n = old_to_new[old_n]
-                if new_n != old_n:
-                    # 선행 공백 + 새 번호 + .하위번호 + 나머지 내용 그대로 유지
-                    item['text'] = f'{m.group(1)}{new_n}.{m.group(3)}{m.group(4)}'
-                    changed = True
+            old_sub = int(m.group(3))
+            new_n = old_to_new_top.get(old_n, old_n)
+            new_sub = old_to_new_sub.get((old_n, old_sub), old_sub) if old_sub != 0 else 0
+            if new_n != old_n or new_sub != old_sub:
+                item['text'] = f'{m.group(1)}{new_n}.{new_sub}{m.group(4)}'
+                changed = True
 
         return changed
 
