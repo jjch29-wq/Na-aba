@@ -1,0 +1,312 @@
+{
+    "SEOUL_COVER_ANCHOR": "E5",
+    "SEOUL_COVER_W": 200.0,
+    "SEOUL_COVER_H": 18.0,
+    "SEOUL_COVER_X": 30.0,
+    "SEOUL_COVER_Y": 15.0,
+    "SITCO_COVER_ANCHOR": "A6",
+    "SITCO_COVER_W": 80.0,
+    "SITCO_COVER_H": 40.0,
+    "SITCO_COVER_X": 10.0,
+    "SITCO_COVER_Y": 10.0,
+    "FOOTER_COVER_ANCHOR": "P50",
+    "FOOTER_COVER_W": 80.0,
+    "FOOTER_COVER_H": 20.0,
+    "FOOTER_COVER_X": 0.0,
+    "FOOTER_COVER_Y": 10.0,
+    "FOOTER_PT_COVER_ANCHOR": "A50",
+    "FOOTER_PT_COVER_W": 100.0,
+    "FOOTER_PT_COVER_H": 25.0,
+    "FOOTER_PT_COVER_X": 5.0,
+    "FOOTER_PT_COVER_Y": 10.0,
+    "SEOUL_DATA_ANCHOR": "F5",
+    "SEOUL_DATA_W": 200.0,
+    "SEOUL_DATA_H": 18.0,
+    "SEOUL_DATA_X": 30.0,
+    "SEOUL_DATA_Y": 15.0,
+    "SITCO_DATA_ANCHOR": "A6",
+    "SITCO_DATA_W": 100.0,
+    "SITCO_DATA_H": 50.0,
+    "SITCO_DATA_X": 20.0,
+    "SITCO_DATA_Y": 5.0,
+    "FOOTER_DATA_ANCHOR": "M46",
+    "FOOTER_DATA_W": 100.0,
+    "FOOTER_DATA_H": 15.0,
+    "FOOTER_DATA_X": 25.0,
+    "FOOTER_DATA_Y": 10.0,
+    "FOOTER_PT_DATA_ANCHOR": "A46",
+    "FOOTER_PT_DATA_W": 100.0,
+    "FOOTER_PT_DATA_H": 25.0,
+    "FOOTER_PT_DATA_X": 3.0,
+    "FOOTER_PT_DATA_Y": 7.0,
+    "MARGIN_DATA_TOP": 0.2,
+    "MARGIN_DATA_BOTTOM": 0.0,
+    "MARGIN_DATA_LEFT": 0.5,
+    "MARGIN_DATA_RIGHT": 0.3,
+    "PRINT_SCALE_DATA": 95,
+    "START_ROW": 19,
+    "DATA_END_ROW": 45,
+    "PRINT_END_ROW": 47,
+    "CUSTOM_ROWS_COVER": "23-38",
+    "CUSTOM_ROW_HEIGHT_COVER": "21",
+    "CUSTOM_COLS_COVER": "",
+    "CUSTOM_COL_WIDTH_COVER": "10.0",
+    "CUSTOM_ROWS_DATA": "",
+    "CUSTOM_ROW_HEIGHT_DATA": "20.55",
+    "CUSTOM_COLS_DATA": "",
+    "CUSTOM_COL_WIDTH_DATA": "10.0",
+    "PAUT_START_ROW": 11,
+    "PAUT_DATA_END_ROW": 40,
+    "PAUT_PRINT_END_ROW": 45,
+    "RT_START_ROW": 19,
+    "RT_DATA_END_ROW": 45,
+    "RT_PRINT_END_ROW": 47,
+    "MARGIN_COVER_TOP": 0.1,
+    "MARGIN_COVER_BOTTOM": 0.1,
+    "MARGIN_COVER_LEFT": 0.5,
+    "MARGIN_COVER_RIGHT": 0.3,
+    "PRINT_SCALE_COVER": 95,
+    "ROW_HEIGHT_COVER": 16.5,
+    "ROW_HEIGHT_DATA": 20.55,
+    "SEOUL_COVER_PATH": "C:/Users/jjch2/Desktop/PMI Report/\uc11c\uc6b8\uac80\uc0ac.png",
+    "SITCO_COVER_PATH": "C:/Users/jjch2/Desktop/PMI Report/SITCO.png",
+    "FOOTER_COVER_PATH": "C:/Users/jjch2/Desktop/PMI Report/\ubc14\ub2e5\uae00 PMI.png",
+    "FOOTER_PT_COVER_PATH": "C:/Users/jjch2/Desktop/PMI Report/\ubc14\ub2e5\uae00 PMI\uac11.png",
+    "SKETCH_UP_COVER_ANCHOR": "D33",
+    "SKETCH_UP_COVER_W": 500.0,
+    "SKETCH_UP_COVER_H": 90.0,
+    "SKETCH_UP_COVER_X": 0.0,
+    "SKETCH_UP_COVER_Y": 20.0,
+    "SKETCH_UP_COVER_PATH": "C:/Users/jjch2/Desktop/PMI Report/RT Report/Shootiong Sketch \uc0c1.png",
+    "SKETCH_DOWN_COVER_ANCHOR": "D39",
+    "SKETCH_DOWN_COVER_W": 500.0,
+    "SKETCH_DOWN_COVER_H": 90.0,
+    "SKETCH_DOWN_COVER_X": 0.0,
+    "SKETCH_DOWN_COVER_Y": 0.0,
+    "SKETCH_DOWN_COVER_PATH": "C:/Users/jjch2/Desktop/PMI Report/RT Report/Shootiong Sketch \ud558.png",
+    "SEOUL_DATA_PATH": "C:/Users/jjch2/Desktop/PMI Report/\uc11c\uc6b8\uac80\uc0ac.png",
+    "SITCO_DATA_PATH": "C:/Users/jjch2/Desktop/PMI Report/SITCO.png",
+    "FOOTER_DATA_PATH": "C:/Users/jjch2/Desktop/PMI Report/\ubc14\ub2e5\uae00 PMI.png",
+    "FOOTER_PT_DATA_PATH": "C:/Users/jjch2/Desktop/PMI Report/\ubc14\ub2e5\uae00 PMI-1.png",
+    "SKETCH_COVER_ANCHOR": "D33",
+    "SKETCH_COVER_W": 300.0,
+    "SKETCH_COVER_H": 150.0,
+    "SKETCH_COVER_X": 0.0,
+    "SKETCH_COVER_Y": 0.0,
+    "SKETCH_COVER_PATH": "C:/Users/jjch2/Desktop/PMI Report/RT Report/Shootiong Sketch.png",
+    "RT_COLUMNS": [
+        [
+            "selected",
+            "V",
+            59
+        ],
+        [
+            "No",
+            "No",
+            59
+        ],
+        [
+            "Date",
+            "Date",
+            115
+        ],
+        [
+            "Dwg",
+            "Drawing No.",
+            109
+        ],
+        [
+            "Joint",
+            "Film Ident. No.",
+            275
+        ],
+        [
+            "Loc",
+            "Film Location",
+            92
+        ],
+        [
+            "Accept",
+            "Acc",
+            58
+        ],
+        [
+            "Reject",
+            "Rej",
+            58
+        ],
+        [
+            "Grade",
+            "Deg",
+            57
+        ],
+        [
+            "D1",
+            "\u2460 Crack",
+            57
+        ],
+        [
+            "D2",
+            "\u2461 IP",
+            57
+        ],
+        [
+            "D3",
+            "\u2462 LF",
+            57
+        ],
+        [
+            "D4",
+            "\u2463 Slag",
+            57
+        ],
+        [
+            "D5",
+            "\u2464 Por",
+            57
+        ],
+        [
+            "D6",
+            "\u2465 U/C",
+            57
+        ],
+        [
+            "D7",
+            "\u2466 RUC",
+            57
+        ],
+        [
+            "D8",
+            "\u2467 BT",
+            58
+        ],
+        [
+            "D9",
+            "\u2468 TI",
+            58
+        ],
+        [
+            "D10",
+            "\u2469 CP",
+            58
+        ],
+        [
+            "D11",
+            "\u246a RC",
+            52
+        ],
+        [
+            "D12",
+            "\u246b Mis",
+            62
+        ],
+        [
+            "D13",
+            "\u246c EP",
+            51
+        ],
+        [
+            "D14",
+            "\u246d SD",
+            53
+        ],
+        [
+            "D15",
+            "\u246e Oth",
+            48
+        ],
+        [
+            "Welder",
+            "Welder No",
+            37
+        ],
+        [
+            "Remarks",
+            "Remarks",
+            72
+        ]
+    ],
+    "PMI_COLUMNS": [
+        [
+            "selected",
+            "V",
+            40
+        ],
+        [
+            "No",
+            "No",
+            50
+        ],
+        [
+            "Date",
+            "Date",
+            90
+        ],
+        [
+            "Dwg",
+            "ISO/DWG",
+            180
+        ],
+        [
+            "Joint",
+            "Joint No",
+            100
+        ],
+        [
+            "Loc",
+            "Test Location",
+            100
+        ],
+        [
+            "Ni",
+            "Ni",
+            60
+        ],
+        [
+            "Cr",
+            "Cr",
+            60
+        ],
+        [
+            "Mo",
+            "Mo",
+            60
+        ],
+        [
+            "Cu",
+            "Cu",
+            80
+        ],
+        [
+            "Grade",
+            "Grade",
+            100
+        ]
+    ],
+    "PMI_FILTERS": [
+        {
+            "key": "Cr",
+            "min": "",
+            "max": ""
+        },
+        {
+            "key": "Ni",
+            "min": "",
+            "max": ""
+        },
+        {
+            "key": "Mo",
+            "min": "",
+            "max": ""
+        }
+    ],
+    "UT_START_ROW": 0,
+    "UT_DATA_END_ROW": 0,
+    "UT_PRINT_END_ROW": 0,
+    "PT_START_ROW": 18,
+    "PT_DATA_END_ROW": 18,
+    "PT_PRINT_END_ROW": 18,
+    "PMI_START_ROW": 19,
+    "PMI_DATA_END_ROW": 45,
+    "PMI_PRINT_END_ROW": 47
+}

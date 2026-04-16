@@ -1,0 +1,29 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.pyd
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.env
+
+# Temporary Files
+temp_*.py
+temp_*.txt
+search_output*.txt
+search_results.txt
+*.log
+
+# Data & Exports
+PMI_Export_*.xlsx
+PMI_Data_전체.json
+
+# OS files
+desktop.ini
+.DS_Store
